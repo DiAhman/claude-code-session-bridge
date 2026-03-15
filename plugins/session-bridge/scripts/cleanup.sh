@@ -2,7 +2,7 @@
 # scripts/cleanup.sh — Clean up session on exit. Notify connected peers.
 set -euo pipefail
 
-BRIDGE_DIR="${BRIDGE_DIR:-$HOME/.claude/bridge}"
+BRIDGE_DIR="${BRIDGE_DIR:-$HOME/.claude/session-bridge}"
 PROJECT_DIR="${PROJECT_DIR:-$(pwd)}"
 BRIDGE_SESSION_FILE="$PROJECT_DIR/.claude/bridge-session"
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"

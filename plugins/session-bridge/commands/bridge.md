@@ -101,7 +101,7 @@ Send a query to a connected peer and wait for the response.
 1. Read session ID from `.claude/bridge-session`. If not found, tell user to run `/bridge start` first.
 2. Find connected peers:
    ```bash
-   find ~/.claude/bridge/sessions/$(cat .claude/bridge-session)/inbox -name "*.json" -exec jq -r 'select(.type == "ping") | .from' {} \; 2>/dev/null | sort -u
+   find ~/.claude/session-bridge/sessions/$(cat .claude/bridge-session)/inbox -name "*.json" -exec jq -r 'select(.type == "ping") | .from' {} \; 2>/dev/null | sort -u
    ```
 3. If multiple peers, ask which one to query.
 4. Send the query and capture the message ID:
@@ -111,7 +111,7 @@ Send a query to a connected peer and wait for the response.
 5. Tell the user: "Asking [peer-project-name]... waiting for response."
 6. **Immediately wait for the response** (blocks up to 60 seconds):
    ```bash
-   bash "${CLAUDE_PLUGIN_ROOT}/scripts/bridge-wait.sh" "$(cat .claude/bridge-session)" "$MSG_ID" 90
+   bash "${CLAUDE_PLUGIN_ROOT}/scripts/bridge-receive.sh" "$(cat .claude/bridge-session)" "$MSG_ID" 90
    ```
 7. When the response arrives, display it and continue working with the information.
 8. If it times out, tell the user the peer may be inactive or not in listening mode.

@@ -2,7 +2,7 @@
 # scripts/heartbeat.sh — Update lastHeartbeat in manifest.
 set -euo pipefail
 
-BRIDGE_DIR="${BRIDGE_DIR:-$HOME/.claude/bridge}"
+BRIDGE_DIR="${BRIDGE_DIR:-$HOME/.claude/session-bridge}"
 PROJECT_DIR="${PROJECT_DIR:-$(pwd)}"
 
 if [ -n "${BRIDGE_SESSION_ID:-}" ]; then

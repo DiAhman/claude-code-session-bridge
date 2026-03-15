@@ -6,7 +6,7 @@
 set -euo pipefail
 
 TIMEOUT="${1:-0}"  # 0 = no timeout (wait forever)
-BRIDGE_DIR="${BRIDGE_DIR:-$HOME/.claude/bridge}"
+BRIDGE_DIR="${BRIDGE_DIR:-$HOME/.claude/session-bridge}"
 SESSIONS_DIR="$BRIDGE_DIR/sessions"
 
 ELAPSED=0

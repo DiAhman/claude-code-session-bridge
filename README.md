@@ -1,10 +1,10 @@
 <p align="center">
-  <h1 align="center">claude-bridge</h1>
+  <h1 align="center">session-bridge</h1>
   <p align="center">
     <strong>Peer-to-peer communication between Claude Code sessions</strong>
   </p>
   <p align="center">
-    <a href="https://github.com/PatilShreyas/claude-bridge/actions/workflows/test.yml"><img src="https://github.com/PatilShreyas/claude-bridge/actions/workflows/test.yml/badge.svg" alt="Tests"></a>
+    <a href="https://github.com/PatilShreyas/claude-code-session-bridge/actions/workflows/test.yml"><img src="https://github.com/PatilShreyas/claude-code-session-bridge/actions/workflows/test.yml/badge.svg" alt="Tests"></a>
     <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue.svg" alt="MIT License"></a>
   </p>
   <p align="center">
@@ -17,7 +17,7 @@
 
 ---
 
-When you're working across multiple repos — a shared library and its consumer app, a backend and frontend, microservices — each Claude Code session is isolated. **claude-bridge** lets them talk to each other.
+When you're working across multiple repos — a shared library and its consumer app, a backend and frontend, microservices — each Claude Code session is isolated. **session-bridge** lets them talk to each other.
 
 The Library agent answers questions about breaking changes. The Consumer agent asks what API replaced a deprecated function. The agent responds with its **full context** — no approximation, no extra API cost.
 
@@ -31,26 +31,26 @@ brew install jq        # macOS
 sudo apt install jq    # Linux
 
 # Install the plugin
-claude plugin marketplace add PatilShreyas/claude-bridge
-claude plugin install claude-bridge
+claude plugin marketplace add PatilShreyas/claude-code-session-bridge
+claude plugin install session-bridge
 ```
 
 <details>
 <summary>Alternative: install via git clone</summary>
 
 ```bash
-git clone https://github.com/PatilShreyas/claude-bridge.git ~/claude-bridge
+git clone https://github.com/PatilShreyas/claude-code-session-bridge.git ~/claude-code-session-bridge
 ```
 
 Then start Claude with:
 ```bash
-claude --plugin-dir ~/claude-bridge/plugins/claude-bridge
+claude --plugin-dir ~/claude-code-session-bridge/plugins/session-bridge
 ```
 
 Or add to `~/.claude/settings.json` for permanent loading:
 ```json
 {
-  "plugins": ["~/claude-bridge/plugins/claude-bridge"]
+  "plugins": ["~/claude-code-session-bridge/plugins/session-bridge"]
 }
 ```
 
@@ -214,7 +214,7 @@ g7h8i9     my-app               active   ~/projects/my-app  (you)
 
 - **Don't use it as a chat app** — it's designed for agent-to-agent coordination, not human conversation. The agents talk; you give them tasks.
 - **Don't send secrets** — messages are plain JSON on the local filesystem. No encryption. Don't ask a peer to "send me the API keys."
-- **Don't expect remote access** — both sessions must be on the same machine. It uses the local filesystem (`~/.claude/bridge/`), not a network protocol.
+- **Don't expect remote access** — both sessions must be on the same machine. It uses the local filesystem (`~/.claude/session-bridge/`), not a network protocol.
 - **Don't run `/bridge listen` on both sides simultaneously** and expect them to talk — one side listens, the other asks. If both listen, neither asks.
 - **Don't use it for large file transfers** — message content is passed as shell arguments. Share file paths or describe locations instead of pasting entire files into queries.
 - **Don't leave sessions running forever** — stale sessions from killed terminals persist until manually cleaned up with `/bridge stop` or `/bridge peers` + cleanup.
@@ -247,7 +247,7 @@ When a session is in `/bridge listen` mode, it's dedicated to answering peer que
 <summary>Click to expand</summary>
 
 ```
-plugins/claude-bridge/
+plugins/session-bridge/
 ├── .claude-plugin/
 │   └── plugin.json
 ├── commands/
@@ -266,7 +266,8 @@ plugins/claude-bridge/
 │   ├── heartbeat.sh             # Update session heartbeat
 │   ├── cleanup.sh               # Remove session, notify peers
 │   ├── bridge-listen.sh         # Block until message arrives
-│   └── bridge-wait.sh           # Block until specific response arrives
+│   └── bridge-receive.sh        # Block until specific response arrives
+├── test.sh                      # Run all tests
 └── tests/
     ├── test-helpers.sh           # Shared assertions
     ├── test-register.sh
@@ -277,7 +278,7 @@ plugins/claude-bridge/
     ├── test-cleanup.sh
     ├── test-heartbeat.sh
     ├── test-bridge-listen.sh
-    ├── test-bridge-wait.sh
+    ├── test-bridge-receive.sh
     └── test-integration.sh       # End-to-end two-session test
 ```
 
@@ -286,12 +287,8 @@ plugins/claude-bridge/
 ## Running Tests
 
 ```bash
-cd plugins/claude-bridge
-for t in tests/test-*.sh; do
-  echo "=== $(basename $t) ==="
-  bash "$t"
-  echo
-done
+cd plugins/session-bridge
+bash test.sh
 ```
 
 ## Contributing

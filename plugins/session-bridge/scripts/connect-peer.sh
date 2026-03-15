@@ -3,7 +3,7 @@
 set -euo pipefail
 
 TARGET_ID="$1"
-BRIDGE_DIR="${BRIDGE_DIR:-$HOME/.claude/bridge}"
+BRIDGE_DIR="${BRIDGE_DIR:-$HOME/.claude/session-bridge}"
 SENDER_ID="${BRIDGE_SESSION_ID:?BRIDGE_SESSION_ID must be set}"
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 

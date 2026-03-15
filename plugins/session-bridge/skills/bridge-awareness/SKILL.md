@@ -13,7 +13,7 @@ When the user asks you to communicate with a peer — whether via `/bridge ask`,
 
 1. Find connected peers:
    ```bash
-   find ~/.claude/bridge/sessions/$(cat .claude/bridge-session)/inbox -name "*.json" -exec jq -r 'select(.type == "ping") | "\(.metadata.fromProject) (\(.from))"' {} \; 2>/dev/null | sort -u
+   find ~/.claude/session-bridge/sessions/$(cat .claude/bridge-session)/inbox -name "*.json" -exec jq -r 'select(.type == "ping") | "\(.metadata.fromProject) (\(.from))"' {} \; 2>/dev/null | sort -u
    ```
 2. If multiple peers, pick the most relevant one (by project name) or ask the user.
 3. Send the query and capture the message ID:
@@ -23,11 +23,11 @@ When the user asks you to communicate with a peer — whether via `/bridge ask`,
 4. Tell the user: "Asking [peer-project-name]..."
 5. Wait for the response (blocks up to 90 seconds):
    ```bash
-   bash "${CLAUDE_PLUGIN_ROOT}/scripts/bridge-wait.sh" "$(cat .claude/bridge-session)" "$MSG_ID" 90
+   bash "${CLAUDE_PLUGIN_ROOT}/scripts/bridge-receive.sh" "$(cat .claude/bridge-session)" "$MSG_ID" 90
    ```
 6. When the response arrives, read it carefully:
    - If it's a direct answer, **use it to continue the user's task** — update code, fix errors, apply migrations, etc.
-   - If the peer is **asking a follow-up question** (they need more info from you), answer their question and send a new query with your answer + the original question. Then wait again with `bridge-wait.sh`.
+   - If the peer is **asking a follow-up question** (they need more info from you), answer their question and send a new query with your answer + the original question. Then wait again with `bridge-receive.sh`.
 7. Continue this back-and-forth until you get a final answer, then apply it.
 
 ## When to Query Peers Proactively
@@ -71,11 +71,11 @@ When a `query` message arrives (in listen mode or otherwise):
    ```bash
    BRIDGE_SESSION_ID=$(cat .claude/bridge-session) bash "${CLAUDE_PLUGIN_ROOT}/scripts/send-message.sh" <FROM_ID> response "Your answer" <MESSAGE_ID>
    ```
-5. If you **need more information** from the peer to answer properly, send your question as a response (with `inReplyTo` set so the peer's `bridge-wait.sh` picks it up):
+5. If you **need more information** from the peer to answer properly, send your question as a response (with `inReplyTo` set so the peer's `bridge-receive.sh` picks it up):
    ```bash
    BRIDGE_SESSION_ID=$(cat .claude/bridge-session) bash "${CLAUDE_PLUGIN_ROOT}/scripts/send-message.sh" <FROM_ID> response "I need more info: <your question>. Please clarify and ask again." <MESSAGE_ID>
    ```
-   The peer will receive this via `bridge-wait.sh`, see it's a question, answer it, and send a new query. Your listen loop will pick up the follow-up.
+   The peer will receive this via `bridge-receive.sh`, see it's a question, answer it, and send a new query. Your listen loop will pick up the follow-up.
 6. Be concise but complete — include code snippets, API signatures, type definitions, migration steps.
 
 ## Responding to Pings

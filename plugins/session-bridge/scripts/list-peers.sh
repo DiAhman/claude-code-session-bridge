@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 # scripts/list-peers.sh — List all active bridge sessions.
-# Env: BRIDGE_DIR (default: ~/.claude/bridge)
+# Env: BRIDGE_DIR (default: ~/.claude/session-bridge)
 set -euo pipefail
 
-BRIDGE_DIR="${BRIDGE_DIR:-$HOME/.claude/bridge}"
+BRIDGE_DIR="${BRIDGE_DIR:-$HOME/.claude/session-bridge}"
 SESSIONS_DIR="$BRIDGE_DIR/sessions"
 
 if [ ! -d "$SESSIONS_DIR" ]; then

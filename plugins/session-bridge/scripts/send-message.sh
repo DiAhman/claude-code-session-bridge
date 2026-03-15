@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # scripts/send-message.sh — Send a message to a peer's inbox.
 # Usage: send-message.sh <target-id> <type> <content> [in-reply-to]
-# Env: BRIDGE_DIR (default: ~/.claude/bridge), BRIDGE_SESSION_ID (required)
+# Env: BRIDGE_DIR (default: ~/.claude/session-bridge), BRIDGE_SESSION_ID (required)
 # Outputs: message ID to stdout
 set -euo pipefail
 
@@ -10,7 +10,7 @@ MSG_TYPE="$2"
 CONTENT="$3"
 IN_REPLY_TO="${4:-null}"
 
-BRIDGE_DIR="${BRIDGE_DIR:-$HOME/.claude/bridge}"
+BRIDGE_DIR="${BRIDGE_DIR:-$HOME/.claude/session-bridge}"
 SENDER_ID="${BRIDGE_SESSION_ID:?BRIDGE_SESSION_ID must be set}"
 
 TARGET_INBOX="$BRIDGE_DIR/sessions/$TARGET_ID/inbox"

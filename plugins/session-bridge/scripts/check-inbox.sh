@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # scripts/check-inbox.sh — Check ALL session inboxes for pending messages.
-# Does NOT depend on working directory — scans ~/.claude/bridge/sessions/ directly.
+# Does NOT depend on working directory — scans ~/.claude/session-bridge/sessions/ directly.
 # Usage: check-inbox.sh [--summary-only]
-# Env: BRIDGE_DIR (default: ~/.claude/bridge)
+# Env: BRIDGE_DIR (default: ~/.claude/session-bridge)
 set -euo pipefail
 
 SUMMARY_ONLY=false
@@ -10,7 +10,7 @@ if [ "${1:-}" = "--summary-only" ]; then
   SUMMARY_ONLY=true
 fi
 
-BRIDGE_DIR="${BRIDGE_DIR:-$HOME/.claude/bridge}"
+BRIDGE_DIR="${BRIDGE_DIR:-$HOME/.claude/session-bridge}"
 SESSIONS_DIR="$BRIDGE_DIR/sessions"
 
 # No sessions at all — exit silently

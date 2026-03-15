@@ -1,13 +1,13 @@
 #!/usr/bin/env bash
 # scripts/register.sh — Register this session as a bridge peer.
-# Env: BRIDGE_DIR (default: ~/.claude/bridge), PROJECT_DIR (default: pwd)
+# Env: BRIDGE_DIR (default: ~/.claude/session-bridge), PROJECT_DIR (default: pwd)
 # Outputs: session ID to stdout
 # If a bridge session already exists for this project, reuses it.
 set -euo pipefail
 
 command -v jq >/dev/null 2>&1 || { echo "Error: jq is required. Install with: brew install jq (macOS) or apt install jq (Linux)" >&2; exit 1; }
 
-BRIDGE_DIR="${BRIDGE_DIR:-$HOME/.claude/bridge}"
+BRIDGE_DIR="${BRIDGE_DIR:-$HOME/.claude/session-bridge}"
 PROJECT_DIR="${PROJECT_DIR:-$(pwd)}"
 PROJECT_NAME=$(basename "$PROJECT_DIR")
 BRIDGE_SESSION_FILE="$PROJECT_DIR/.claude/bridge-session"
