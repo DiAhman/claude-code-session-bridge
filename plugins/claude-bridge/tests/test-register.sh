@@ -74,4 +74,10 @@ SESSION_ID2=$(BRIDGE_DIR="$BRIDGE_DIR" PROJECT_DIR="$PROJECT_DIR2" CLAUDE_ENV_FI
 ENV_CONTENT=$(cat "$ENV_FILE")
 assert_contains "CLAUDE_ENV_FILE has BRIDGE_SESSION_ID" "BRIDGE_SESSION_ID=$SESSION_ID2" "$ENV_CONTENT"
 
+# --- Test 6: Re-registering same project reuses session ---
+echo ""
+echo "Test 6: Re-registering same project reuses existing session"
+SESSION_ID_AGAIN=$(BRIDGE_DIR="$BRIDGE_DIR" PROJECT_DIR="$PROJECT_DIR" bash "$REGISTER")
+assert_eq "reused same session ID" "$SESSION_ID" "$SESSION_ID_AGAIN"
+
 print_results

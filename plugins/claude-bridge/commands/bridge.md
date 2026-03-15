@@ -1,6 +1,6 @@
 ---
 name: bridge
-description: Peer-to-peer communication between Claude Code sessions - start, connect, peers, ask, status, stop
+description: Peer-to-peer communication between Claude Code sessions - start, connect, listen, ask, peers, status, stop
 argument-hint: "<action> [args]"
 allowed-tools:
   - Bash
@@ -18,36 +18,19 @@ Parse the user's argument to determine the action:
 
 ### `start`
 
-Register this session as a bridge peer. If a bridge is already active for this project, reuses it.
+Register this session as a bridge peer.
 
-1. Run the registration script and capture BOTH stdout (session ID) and stderr (status):
+1. Run the registration script:
    ```bash
    bash "${CLAUDE_PLUGIN_ROOT}/scripts/register.sh"
    ```
-   Stderr will say one of:
-   - `EXISTING:<id>` — another session already has an active watcher for this project
-   - `RECLAIMED:<id>` — session existed but watcher was dead, reclaimed it
-   - `NEW:<id>` — fresh session created
-
-2. If **EXISTING**: the watcher is already running from another Claude session. Tell the user:
-   ```
-   Bridge already active for this project!
-   Session ID: <session-id>
-   A watcher is already running from another Claude session.
-   ```
-   Do NOT start another watcher.
-
-3. If **RECLAIMED** or **NEW**: start the background watcher using Bash with `run_in_background: true`:
-   ```bash
-   bash "${CLAUDE_PLUGIN_ROOT}/scripts/bridge-watcher.sh" "$(cat .claude/bridge-session)"
-   ```
-   **IMPORTANT:** You MUST use `run_in_background: true` on this Bash tool call.
-   Tell the user:
+2. Capture the session ID from stdout.
+3. Display to the user:
    ```
    Bridge active!
    Session ID: <session-id>
-   Background watcher running — peer queries will be auto-answered.
    Share this ID with other Claude sessions to connect: /bridge connect <session-id>
+   Use /bridge listen to start receiving and answering peer queries.
    ```
 
 ### `connect <session-id>`
@@ -66,18 +49,50 @@ Connect to a peer session. Auto-starts this session's bridge if not already acti
    ```
 4. If successful, display the peer's project name and path. If you auto-started in step 2, also show this session's ID.
 5. If it fails (peer not found), suggest `/bridge peers` to see available sessions.
-6. Tell the user: "Connected! The peer will see the connection on their next prompt. Communication is now automatic."
+6. Tell the user: "Connected! Use `/bridge listen` to start answering peer queries, or `/bridge ask <question>` to ask them something."
 
-### `peers`
+### `listen`
 
-List all active bridge sessions on this machine.
+Enter listening mode — continuously wait for peer messages and respond to them. This dedicates the session to answering peer queries using YOUR FULL CONTEXT.
 
-1. Run:
+**This is a loop. You MUST keep listening until the user interrupts (Ctrl+C).**
+
+**Auto-start:** First, check if `.claude/bridge-session` exists. If NOT, auto-start the bridge:
+```bash
+bash "${CLAUDE_PLUGIN_ROOT}/scripts/register.sh"
+```
+Display: "Bridge auto-started! Session ID: <id>". Then proceed to the loop.
+
+The loop:
+
+1. Tell the user: "Listening for peer messages... (Ctrl+C to stop)"
+2. Run the listen script (this BLOCKS until a message arrives):
    ```bash
-   bash "${CLAUDE_PLUGIN_ROOT}/scripts/list-peers.sh"
+   bash "${CLAUDE_PLUGIN_ROOT}/scripts/bridge-listen.sh"
    ```
-2. Display the formatted table.
-3. If this session has a bridge active (`.claude/bridge-session` exists), highlight which one is "you".
+3. When a message arrives, parse the output:
+   - Lines before `---` are metadata (MESSAGE_ID, FROM_ID, TO_ID, FROM_PROJECT, TYPE, IN_REPLY_TO)
+   - Lines after `---` are the message content
+
+4. Handle by message type:
+
+   **If TYPE=query**: Read the question. Formulate a helpful, concise answer using your full knowledge of this project. Send it:
+   ```bash
+   BRIDGE_SESSION_ID=$(cat .claude/bridge-session) bash "${CLAUDE_PLUGIN_ROOT}/scripts/send-message.sh" <FROM_ID> response "Your answer here" <MESSAGE_ID>
+   ```
+
+   **If TYPE=ping**: Send a ping back:
+   ```bash
+   BRIDGE_SESSION_ID=$(cat .claude/bridge-session) bash "${CLAUDE_PLUGIN_ROOT}/scripts/send-message.sh" <FROM_ID> ping "connected"
+   ```
+
+   **If TYPE=session-ended**: Note it and tell the user: "Peer [FROM_PROJECT] disconnected."
+
+   **If TYPE=response**: Display the response content to the user.
+
+5. **IMMEDIATELY go back to step 2.** Run `bridge-listen.sh` again. Do NOT stop. Do NOT ask the user what to do next. Keep listening.
+
+**CRITICAL:** After responding to each message, you MUST immediately run `bridge-listen.sh` again to continue listening. This is a continuous loop. The only way to exit is the user pressing Ctrl+C.
 
 ### `ask <question>`
 
@@ -96,10 +111,21 @@ Send a query to a connected peer and wait for the response.
 5. Tell the user: "Asking [peer-project-name]... waiting for response."
 6. **Immediately wait for the response** (blocks up to 60 seconds):
    ```bash
-   bash "${CLAUDE_PLUGIN_ROOT}/scripts/bridge-wait.sh" "$(cat .claude/bridge-session)" "$MSG_ID" 60
+   bash "${CLAUDE_PLUGIN_ROOT}/scripts/bridge-wait.sh" "$(cat .claude/bridge-session)" "$MSG_ID" 90
    ```
 7. When the response arrives, display it and continue working with the information.
-8. If it times out, tell the user the peer may be inactive.
+8. If it times out, tell the user the peer may be inactive or not in listening mode.
+
+### `peers`
+
+List all active bridge sessions on this machine.
+
+1. Run:
+   ```bash
+   bash "${CLAUDE_PLUGIN_ROOT}/scripts/list-peers.sh"
+   ```
+2. Display the formatted table.
+3. If this session has a bridge active (`.claude/bridge-session` exists), highlight which one is "you".
 
 ### `status`
 
@@ -123,46 +149,15 @@ Show current bridge state.
    Outbox: 5 messages sent
    ```
 
-### `watch`
-
-Start the background watcher that auto-responds to peer queries without user input. Uses Claude Code's built-in background task feature (Bash with `run_in_background: true`).
-
-1. Read session ID from `.claude/bridge-session`. If not found, run `/bridge start` first.
-2. Check if a watcher is already running:
-   ```bash
-   SESSION_ID=$(cat .claude/bridge-session) && [ -f ~/.claude/bridge/sessions/$SESSION_ID/watcher.pid ] && kill -0 $(cat ~/.claude/bridge/sessions/$SESSION_ID/watcher.pid) 2>/dev/null && echo "already running"
-   ```
-3. If not running, start the watcher **as a background Bash command** using `run_in_background: true`:
-   ```bash
-   bash "${CLAUDE_PLUGIN_ROOT}/scripts/bridge-watcher.sh" "$(cat .claude/bridge-session)"
-   ```
-   **IMPORTANT:** You MUST use `run_in_background: true` on the Bash tool call. This runs it as a Claude Code background task that stays alive for the session.
-4. Tell the user: "Background watcher active. Peer queries will be auto-answered. Use `/bridge unwatch` to stop."
-
-### `unwatch`
-
-Stop the background watcher.
-
-1. Read session ID from `.claude/bridge-session`.
-2. Kill the watcher process:
-   ```bash
-   SESSION_ID=$(cat .claude/bridge-session) && [ -f ~/.claude/bridge/sessions/$SESSION_ID/watcher.pid ] && kill $(cat ~/.claude/bridge/sessions/$SESSION_ID/watcher.pid) 2>/dev/null
-   ```
-3. Tell the user: "Background watcher stopped."
-
 ### `stop`
 
 Unregister and clean up.
 
-1. First stop the watcher if running:
-   ```bash
-   SESSION_ID=$(cat .claude/bridge-session 2>/dev/null) && [ -n "$SESSION_ID" ] && [ -f ~/.claude/bridge/sessions/$SESSION_ID/watcher.pid ] && kill $(cat ~/.claude/bridge/sessions/$SESSION_ID/watcher.pid) 2>/dev/null; true
-   ```
-2. Run:
+1. Run:
    ```bash
    bash "${CLAUDE_PLUGIN_ROOT}/scripts/cleanup.sh"
    ```
-3. Tell the user: "Bridge stopped. Connected peers have been notified."
+2. Tell the user: "Bridge stopped. Connected peers have been notified."
 
 ## No argument / unknown action
 
@@ -171,10 +166,9 @@ If no argument is given, show a brief help:
 Bridge commands:
   /bridge start              - Register this session
   /bridge connect <id>       - Connect to a peer session
-  /bridge peers              - List active sessions
+  /bridge listen             - Listen and answer peer queries (blocks)
   /bridge ask <question>     - Send a question to a peer
-  /bridge watch              - Auto-respond to peers in background
-  /bridge unwatch            - Stop auto-responding
+  /bridge peers              - List active sessions
   /bridge status             - Show bridge state
   /bridge stop               - Disconnect and clean up
 ```

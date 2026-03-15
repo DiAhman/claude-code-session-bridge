@@ -68,4 +68,14 @@ assert_file_exists "ping in target inbox" "$PING_FILE"
 PING=$(cat "$PING_FILE")
 assert_eq "ping type is ping" "ping" "$(echo "$PING" | jq -r '.type')"
 
+# --- Test 4: Outbox copy has status=sent ---
+echo ""
+echo "Test 4: Outbox copy has status=sent"
+OUTBOX_STATUS=$(jq -r '.status' "$OUTBOX_FILE")
+assert_eq "outbox status is sent" "sent" "$OUTBOX_STATUS"
+
+# Inbox should still be pending
+INBOX_STATUS=$(jq -r '.status' "$INBOX_FILE")
+assert_eq "inbox status is pending" "pending" "$INBOX_STATUS"
+
 print_results

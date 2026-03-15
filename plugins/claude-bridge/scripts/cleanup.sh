@@ -1,7 +1,5 @@
 #!/usr/bin/env bash
-# scripts/cleanup.sh — Clean up session on exit. Notify peers.
-# SAFETY: Only cleans up if the watcher is NOT running. If a new Claude session
-# reclaimed this bridge and started a fresh watcher, we leave it alone.
+# scripts/cleanup.sh — Clean up session on exit. Notify connected peers.
 set -euo pipefail
 
 BRIDGE_DIR="${BRIDGE_DIR:-$HOME/.claude/bridge}"
@@ -9,7 +7,7 @@ PROJECT_DIR="${PROJECT_DIR:-$(pwd)}"
 BRIDGE_SESSION_FILE="$PROJECT_DIR/.claude/bridge-session"
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 
-# Find session ID: try bridge-session file first, then scan manifests
+# Find session ID
 SESSION_ID=""
 if [ -f "$BRIDGE_SESSION_FILE" ]; then
   SESSION_ID=$(cat "$BRIDGE_SESSION_FILE")
@@ -28,16 +26,6 @@ if [ -z "$SESSION_ID" ]; then
   exit 0
 fi
 SESSION_DIR="$BRIDGE_DIR/sessions/$SESSION_ID"
-
-# SAFETY CHECK: If the watcher is still running, another session owns this bridge.
-# Do NOT clean up — just exit quietly.
-PID_FILE="$SESSION_DIR/watcher.pid"
-if [ -f "$PID_FILE" ] && kill -0 "$(cat "$PID_FILE")" 2>/dev/null; then
-  # Watcher is alive — a new session has taken over. Leave everything intact.
-  exit 0
-fi
-
-# Watcher is dead or doesn't exist — safe to clean up.
 
 # Find connected peers from inbox (senders) and outbox (recipients)
 PEER_IDS=""
@@ -66,3 +54,16 @@ rm -rf "$SESSION_DIR"
 
 # Remove bridge-session pointer
 rm -f "$BRIDGE_SESSION_FILE"
+
+# Clean up stale sessions (heartbeat older than 30 minutes)
+STALE_CUTOFF=$(date -u -v-30M +"%Y-%m-%dT%H:%M:%SZ" 2>/dev/null || date -u -d "30 minutes ago" +"%Y-%m-%dT%H:%M:%SZ" 2>/dev/null || echo "")
+if [ -n "$STALE_CUTOFF" ]; then
+  for STALE_MANIFEST in "$BRIDGE_DIR"/sessions/*/manifest.json; do
+    [ -f "$STALE_MANIFEST" ] || continue
+    STALE_DIR=$(dirname "$STALE_MANIFEST")
+    STALE_HB=$(jq -r '.lastHeartbeat // ""' "$STALE_MANIFEST" 2>/dev/null || echo "")
+    if [ -n "$STALE_HB" ] && [[ "$STALE_HB" < "$STALE_CUTOFF" ]]; then
+      rm -rf "$STALE_DIR"
+    fi
+  done
+fi

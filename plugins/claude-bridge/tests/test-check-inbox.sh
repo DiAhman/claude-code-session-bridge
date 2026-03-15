@@ -74,7 +74,7 @@ assert_eq "heartbeat set to old value" "$OLD_HB" "$CURRENT_HB"
 # Run check-inbox (no pending messages, so output is just continue:true)
 OUTPUT=$(BRIDGE_DIR="$BRIDGE_DIR" PROJECT_DIR="$PROJECT_B" bash "$CHECK_INBOX")
 
-# check-inbox.sh does NOT update heartbeat (watcher handles that)
+# check-inbox.sh does NOT update heartbeat (it scans all sessions globally)
 # Verify heartbeat is unchanged
 UPDATED_HB=$(jq -r '.lastHeartbeat' "$MANIFEST")
 if [ "$UPDATED_HB" = "$OLD_HB" ]; then
@@ -93,9 +93,9 @@ assert_contains "summary has session ID" "$TARGET_ID" "$SYSTEM_MSG"
 assert_contains "summary has send-message instruction" "send-message.sh" "$SYSTEM_MSG"
 assert_contains "summary has peer project name" "project-a" "$SYSTEM_MSG"
 
-# --- Test 6: check-inbox does not clean up stale sessions (watcher handles that) ---
+# --- Test 6: check-inbox does not clean up stale sessions ---
 echo ""
-echo "Test 6: check-inbox leaves stale sessions alone (cleanup is watcher's job)"
+echo "Test 6: check-inbox leaves stale sessions alone"
 STALE_ID="stale1"
 STALE_DIR="$BRIDGE_DIR/sessions/$STALE_ID"
 mkdir -p "$STALE_DIR/inbox" "$STALE_DIR/outbox"

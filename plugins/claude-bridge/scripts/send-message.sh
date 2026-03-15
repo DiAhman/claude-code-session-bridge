@@ -69,9 +69,10 @@ TMP_FILE=$(mktemp "$TARGET_INBOX/$MSG_ID.XXXXXX")
 echo "$MSG_JSON" > "$TMP_FILE"
 mv "$TMP_FILE" "$TARGET_INBOX/$MSG_ID.json"
 
-# Copy to sender outbox (audit log)
+# Copy to sender outbox (audit log) with status=sent
+OUTBOX_JSON=$(echo "$MSG_JSON" | jq '.status = "sent"')
 TMP_FILE=$(mktemp "$SENDER_OUTBOX/$MSG_ID.XXXXXX")
-echo "$MSG_JSON" > "$TMP_FILE"
+echo "$OUTBOX_JSON" > "$TMP_FILE"
 mv "$TMP_FILE" "$SENDER_OUTBOX/$MSG_ID.json"
 
 echo -n "$MSG_ID"

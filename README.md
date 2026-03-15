@@ -4,11 +4,10 @@
     <strong>Peer-to-peer communication between Claude Code sessions</strong>
   </p>
   <p align="center">
-    <a href="https://github.com/anthropics/claude-bridge/actions/workflows/test.yml"><img src="https://github.com/anthropics/claude-bridge/actions/workflows/test.yml/badge.svg" alt="Tests"></a>
+    <a href="https://github.com/PatilShreyas/claude-bridge/actions/workflows/test.yml"><img src="https://github.com/PatilShreyas/claude-bridge/actions/workflows/test.yml/badge.svg" alt="Tests"></a>
     <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue.svg" alt="MIT License"></a>
   </p>
   <p align="center">
-    <a href="#installation">Installation</a> &middot;
     <a href="#quick-start">Quick Start</a> &middot;
     <a href="#commands">Commands</a> &middot;
     <a href="#how-it-works">How It Works</a> &middot;
@@ -20,168 +19,98 @@
 
 When you're working across multiple repos — a shared library and its consumer app, a backend and frontend, microservices — each Claude Code session is isolated. **claude-bridge** lets them talk to each other.
 
-The Library agent answers questions about breaking changes. The Consumer agent asks what API replaced `auth.login()`. Automatically. No copy-pasting between terminals.
+The Library agent answers questions about breaking changes. The Consumer agent asks what API replaced a deprecated function. The agent responds with its **full context** — no approximation, no extra API cost.
 
-```mermaid
-sequenceDiagram
-    participant Consumer as Consumer Agent
-    participant CI as Consumer Inbox
-    participant LI as Library Inbox
-    participant Watcher as Library Watcher
+## Getting Started
 
-    Consumer->>LI: "What replaced auth.login()?"
-    Consumer->>Consumer: Waiting for response...
-
-    loop Every 5s
-        Watcher->>LI: Check inbox
-    end
-
-    Watcher->>LI: Detects query
-    Watcher->>Watcher: Gathers context (git diff, session history, CLAUDE.md)
-    Watcher->>Watcher: Generates response via claude -p
-    Watcher->>CI: "Renamed to auth.authenticate(Credentials)"
-
-    Consumer->>CI: Polls for response
-    CI-->>Consumer: Response received
-    Consumer->>Consumer: Applies fix, continues working
-```
-
-## Prerequisites
-
-- [Claude Code](https://claude.ai/claude-code) CLI installed and authenticated
-- [`jq`](https://jqlang.github.io/jq/) for JSON processing
+### 1. Install
 
 ```bash
-# macOS
-brew install jq
+# Install jq (required)
+brew install jq        # macOS
+sudo apt install jq    # Linux
 
-# Linux
-sudo apt install jq
-```
-
-## Installation
-
-### Via marketplace (recommended)
-
-```bash
-claude plugin marketplace add owner/claude-bridge
+# Install the plugin
+claude plugin marketplace add PatilShreyas/claude-bridge
 claude plugin install claude-bridge
 ```
 
-### Via clone
+<details>
+<summary>Alternative: install via git clone</summary>
 
 ```bash
-git clone https://github.com/owner/claude-bridge.git ~/claude-bridge
+git clone https://github.com/PatilShreyas/claude-bridge.git ~/claude-bridge
+```
+
+Then start Claude with:
+```bash
 claude --plugin-dir ~/claude-bridge/plugins/claude-bridge
 ```
 
-<details>
-<summary>Persistent loading (no --plugin-dir needed)</summary>
-
-Clone the repo, then add to `~/.claude/settings.json`:
-
+Or add to `~/.claude/settings.json` for permanent loading:
 ```json
 {
-  "plugins": [
-    "~/claude-bridge/plugins/claude-bridge"
-  ]
+  "plugins": ["~/claude-bridge/plugins/claude-bridge"]
 }
 ```
 
 </details>
 
-## Quick Start
+### 2. Use it
 
-> Two terminals, two projects, one bridge.
+Open two terminals — one for each project.
 
-**Terminal 1 — Library project:**
-```bash
-cd ~/projects/my-library
-claude --plugin-dir ~/claude-bridge/plugins/claude-bridge
+**Terminal 1** (the project that has the answers):
 ```
-```
-> /bridge start
+cd ~/projects/my-library && claude
 
-Bridge active! Session ID: a1b2c3
-Background watcher running — peer queries will be auto-answered.
+> /bridge listen
+Session ID: a1b2c3
+Listening for peer messages... (Ctrl+C to stop)
 ```
 
-**Terminal 2 — Consumer app:**
-```bash
-cd ~/projects/my-app
-claude --plugin-dir ~/claude-bridge/plugins/claude-bridge
+**Terminal 2** (the project that needs answers):
 ```
-```
-> /bridge start
+cd ~/projects/my-app && claude
+
 > /bridge connect a1b2c3
+Connected to 'my-library'
 
-Connected to 'my-library' (a1b2c3)
-
-> /bridge ask "What replaced auth.login()?"
-
-Asking my-library... waiting for response.
+> /bridge ask "What breaking changes did you make?"
 
 Response from my-library:
-  auth.login() was renamed to auth.authenticate().
-  It now takes a Credentials object instead of separate
-  username/password params.
+  3 breaking changes in v2.0:
+  1. login() → authenticate() — takes a Config object
+  2. getUser() → getCurrentUser() — returns UserProfile
+  3. Removed refreshToken() — now automatic
 ```
 
-That's it. The Consumer agent can now also query the Library automatically when it encounters dependency errors.
+That's it. The Library agent responds with its **full session context** — it knows what it changed, why, and how. No extra API calls, no approximation.
 
 ## Commands
 
 | Command | Description |
 |---------|-------------|
-| `/bridge start` | Register this session and start the background watcher |
+| `/bridge start` | Register this session as a bridge peer |
 | `/bridge connect <id>` | Connect to a peer session (auto-starts if needed) |
-| `/bridge peers` | List all active sessions on this machine |
+| `/bridge listen` | Enter listening mode — answer peer queries continuously |
 | `/bridge ask <question>` | Send a question and wait for the response |
+| `/bridge peers` | List all active sessions on this machine |
 | `/bridge status` | Show session ID, connected peers, pending messages |
-| `/bridge watch` | Manually start the background watcher |
-| `/bridge unwatch` | Stop the background watcher |
 | `/bridge stop` | Disconnect, notify peers, clean up |
+
+> **Tip:** You don't always need explicit commands. Just tell your agent "ask the library about X" in natural language and it will use the bridge automatically.
 
 ## How It Works
 
-### The watcher
+### Listen mode
 
-When you run `/bridge start`, a background watcher process starts automatically. It:
+The key innovation: `/bridge listen` puts the agent into a **continuous listening loop**. When a query arrives, the agent itself responds — with its full conversation context, not an approximation.
 
-1. **Polls** the inbox every 5 seconds for new messages
-2. **Gathers context** for incoming queries — git diff, recent commits, active session conversation history, CLAUDE.md
-3. **Generates a response** via `claude -p` with that full context
-4. **Sends the response** back to the sender's inbox
-
-The watcher reads the active Claude Code session's conversation from `~/.claude/projects/` — so it knows what the agent has been working on, not just the code.
-
-### Message flow
-
-```mermaid
-graph LR
-    A["/bridge ask 'question?'"] --> B[send-message.sh]
-    B --> C[Peer's inbox/]
-    C --> D[bridge-watcher.sh]
-    D --> E[claude -p with context]
-    E --> F[send-message.sh]
-    F --> G[Your inbox/]
-    G --> H[bridge-wait.sh]
-    H --> I[Response displayed]
-```
-
-### Architecture
-
-```
-~/.claude/bridge/
-└── sessions/
-    ├── <session-id>/
-    │   ├── manifest.json     # Identity and heartbeat
-    │   ├── inbox/            # Messages TO this session
-    │   ├── outbox/           # Messages FROM this session (audit)
-    │   ├── watcher.pid       # Watcher process ID
-    │   └── watcher.log       # Watcher activity log
-    └── ...
-```
+- **No background process** — the agent IS the responder
+- **No `claude -p` calls** — zero extra API cost for responses
+- **Full context** — the agent that made the changes answers questions about them
+- **Includes real code** — responses contain actual file contents, not just descriptions
 
 **Design principles:**
 - No shared mutable state — each session owns its manifest
@@ -189,30 +118,113 @@ graph LR
 - UUID message IDs — no collision risk
 - Connection via ping handshake — peers never mutate each other's manifests
 
+---
+
+## When To Use It
+
+### Great for
+
+> **Multi-repo coordination** — Library + consumer app, SDK + client, shared module + services
+
+You make breaking changes in the library. Instead of context-switching to the consumer app and manually explaining what changed, the consumer agent asks the library agent directly.
+
+> **Backend + Frontend** — API changes that affect both sides
+
+Backend session changes an endpoint's response format. Frontend session asks "what does the new response look like?" and gets the actual schema, not a stale doc.
+
+> **Microservices** — Service A depends on Service B's contract
+
+Service B renames a field in its API. Service A's agent asks Service B's agent what changed and updates the client code automatically.
+
+> **Monorepo modules** — Independent modules that depend on each other
+
+Module X changes an internal interface. Module Y's agent queries Module X about the new type signatures and applies the fix.
+
+> **Migration assistance** — Upgrading dependencies with breaking changes
+
+Your agent can ask the dependency's agent: "I'm on v1.3. What do I need to change for v2.0?" and get a step-by-step migration with actual code.
+
+### Not designed for
+
+- **Real-time chat** between humans (it's agent-to-agent communication)
+- **Remote collaboration** across machines (local-only via filesystem)
+- **CI/CD pipelines** (sessions are tied to interactive Claude Code)
+- **Persistent messaging** (messages don't survive session cleanup)
+
+## Example Scenarios
+
+### Scenario 1: Dependency upgrade with breaking changes
+
+```
+Consumer: "Update our app to use auth-sdk v2.0"
+  Agent detects version bump → proactively queries library peer
+  Agent: "Asking auth-sdk about breaking changes..."
+  Library responds with changes + migration steps
+  Agent applies all changes automatically
+  Agent: "Done. Updated 4 files, ran tests, all passing."
+```
+
+### Scenario 2: Back-and-forth clarification
+
+```
+Consumer: /bridge ask "How should I handle the new error types?"
+  Library: "What error types are you currently catching? Send me your error handler."
+  Consumer: (reads its own code, sends the relevant function)
+  Library: "Replace AuthError with AuthException. Here's the new hierarchy: ..."
+  Consumer: applies the fix
+```
+
+### Scenario 3: Natural language (no /bridge command needed)
+
+```
+Consumer user: "Ask the backend team what the new API response format looks like
+               for the /users endpoint and update our models accordingly"
+  Agent queries the backend peer
+  Agent gets the response with actual schema
+  Agent updates the model classes
+  Agent: "Updated UserResponse model to match new schema."
+```
+
+### Scenario 4: Multiple peers
+
+```
+> /bridge peers
+SESSION    PROJECT              STATUS   PATH
+-------    -------              ------   ----
+a1b2c3     auth-sdk             active   ~/projects/auth-sdk
+d4e5f6     payments-service     active   ~/projects/payments
+g7h8i9     my-app               active   ~/projects/my-app  (you)
+
+> /bridge ask "What config format does the payments service expect?"
+  Routes to payments-service peer automatically based on question context
+```
+
+## Dos and Don'ts
+
+### Do
+
+- **Use `/bridge listen` on the session that has the knowledge** — the one that made the changes, built the feature, or owns the API. It responds with full context.
+- **Use natural language** — "ask the backend what changed" works just as well as `/bridge ask`.
+- **Let agents share real code** — responses include actual file contents, type definitions, and function signatures. Ask for them specifically if the agent gives you prose instead.
+- **Use for version upgrades** — "update to v2.0" will proactively query the peer about breaking changes before even trying to build.
+- **Use back-and-forth** — if the listener needs more info, it'll ask a follow-up question. The consumer answers and re-queries automatically.
+- **Clean up** — run `/bridge stop` when done, or stale sessions accumulate.
+
+### Don't
+
+- **Don't use it as a chat app** — it's designed for agent-to-agent coordination, not human conversation. The agents talk; you give them tasks.
+- **Don't send secrets** — messages are plain JSON on the local filesystem. No encryption. Don't ask a peer to "send me the API keys."
+- **Don't expect remote access** — both sessions must be on the same machine. It uses the local filesystem (`~/.claude/bridge/`), not a network protocol.
+- **Don't run `/bridge listen` on both sides simultaneously** and expect them to talk — one side listens, the other asks. If both listen, neither asks.
+- **Don't use it for large file transfers** — message content is passed as shell arguments. Share file paths or describe locations instead of pasting entire files into queries.
+- **Don't leave sessions running forever** — stale sessions from killed terminals persist until manually cleaned up with `/bridge stop` or `/bridge peers` + cleanup.
+- **Don't expect instant responses** — the listen script polls every 3 seconds, plus the agent needs time to formulate its answer. Round-trip is typically 5-15 seconds.
+
 ## Known Limitations
 
-### API Cost
+### Session is occupied while listening
 
-> **Important:** The watcher calls `claude -p` for every incoming query, consuming API credits.
-
-There is no rate limiting. Each peer query triggers a separate API call with project context. Monitor your usage if cost is a concern.
-
-### Privacy
-
-The watcher reads local Claude Code session data to build context:
-
-| Data source | What it reads | Why |
-|-------------|--------------|-----|
-| `~/.claude/history.jsonl` | Active session ID per project | To find the right conversation |
-| `~/.claude/projects/<path>/<id>.jsonl` | Recent user/assistant messages | Context for the auto-responder |
-| Git diff, commits | Code changes | What's being worked on |
-| `CLAUDE.md` | Project conventions | Project-specific context |
-
-Your conversation history is fed into `claude -p` prompts locally — **it's never sent to peers**. Only the generated response is shared.
-
-### Relies on Claude Code internals
-
-The plugin reads `~/.claude/projects/` and `~/.claude/history.jsonl` which are undocumented internal formats. If Anthropic changes these, the session context feature may break. Core messaging (inbox/outbox) would continue working — only auto-response quality would degrade.
+When a session is in `/bridge listen` mode, it's dedicated to answering peer queries. The user can't use it for other work until they press Ctrl+C. This is by design — it's the trade-off for getting full-context responses at zero extra cost.
 
 ### Platform support
 
@@ -224,10 +236,10 @@ The plugin reads `~/.claude/projects/` and `~/.claude/history.jsonl` which are u
 
 ### Other considerations
 
-- **Polling latency** — ~10-20s round-trip (5s poll interval + `claude -p` generation time). Fine for cross-project coordination, not for real-time chat.
-- **No encryption** — Messages are plain JSON, protected by Unix file permissions. Don't put secrets in bridge messages.
-- **No message size limits** — Large messages = expensive `claude -p` calls.
+- **Polling interval** — `bridge-listen.sh` checks every 3 seconds. Responses are as fast as the agent can formulate them.
+- **No encryption** — Messages are plain JSON, protected by Unix file permissions.
 - **Session accumulation** — Crashed sessions may persist. Use `/bridge peers` to check, `/bridge stop` to clean up.
+- **Single machine only** — Communication is via local filesystem. No network/remote support.
 
 ## Plugin Structure
 
@@ -253,8 +265,8 @@ plugins/claude-bridge/
 │   ├── connect-peer.sh          # Ping to establish connection
 │   ├── heartbeat.sh             # Update session heartbeat
 │   ├── cleanup.sh               # Remove session, notify peers
-│   ├── bridge-watcher.sh        # Background auto-responder
-│   └── bridge-wait.sh           # Block until response arrives
+│   ├── bridge-listen.sh         # Block until message arrives
+│   └── bridge-wait.sh           # Block until specific response arrives
 └── tests/
     ├── test-helpers.sh           # Shared assertions
     ├── test-register.sh
@@ -264,6 +276,8 @@ plugins/claude-bridge/
     ├── test-connect-peer.sh
     ├── test-cleanup.sh
     ├── test-heartbeat.sh
+    ├── test-bridge-listen.sh
+    ├── test-bridge-wait.sh
     └── test-integration.sh       # End-to-end two-session test
 ```
 

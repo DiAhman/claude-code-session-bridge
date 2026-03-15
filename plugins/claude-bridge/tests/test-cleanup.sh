@@ -79,4 +79,35 @@ else
   echo "  FAIL: no session-ended message found (from check)"; FAIL=$((FAIL + 1))
 fi
 
+# --- Test 4: Stale sessions cleaned up ---
+echo ""
+echo "Test 4: Stale sessions (>30 min old) are cleaned up"
+STALE_ID="stale99"
+STALE_DIR="$BRIDGE_DIR/sessions/$STALE_ID"
+mkdir -p "$STALE_DIR/inbox" "$STALE_DIR/outbox"
+cat > "$STALE_DIR/manifest.json" <<EOF
+{
+  "sessionId": "$STALE_ID",
+  "projectName": "stale-project",
+  "projectPath": "/tmp/stale",
+  "startedAt": "2020-01-01T00:00:00Z",
+  "lastHeartbeat": "2020-01-01T00:00:00Z",
+  "status": "active",
+  "capabilities": ["query"]
+}
+EOF
+assert_dir_exists "stale session exists before cleanup" "$STALE_DIR"
+
+# Register a new session and clean it up — stale cleanup runs as part of cleanup.sh
+PROJECT_C="$TEST_TMPDIR/project-c"
+mkdir -p "$PROJECT_C"
+SESSION_C=$(BRIDGE_DIR="$BRIDGE_DIR" PROJECT_DIR="$PROJECT_C" bash "$REGISTER")
+BRIDGE_DIR="$BRIDGE_DIR" PROJECT_DIR="$PROJECT_C" bash "$CLEANUP"
+
+if [ ! -d "$STALE_DIR" ]; then
+  echo "  PASS: stale session cleaned up"; PASS=$((PASS + 1))
+else
+  echo "  FAIL: stale session still exists"; FAIL=$((FAIL + 1))
+fi
+
 print_results

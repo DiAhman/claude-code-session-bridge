@@ -55,8 +55,8 @@ for SESSION_DIR in "$SESSIONS_DIR"/*/; do
   MANIFEST="$SESSION_DIR/manifest.json"
   if [ -f "$MANIFEST" ]; then
     SESSION_NAME=$(jq -r '.projectName // "unknown"' "$MANIFEST")
-    # Note: heartbeat is updated by the watcher (bridge-watcher.sh), not here.
-    # This script scans ALL sessions and should not touch other sessions' manifests.
+    # Note: heartbeat is not updated here. This script scans ALL sessions
+    # and should not touch other sessions' manifests.
   fi
 
   for MSG_FILE in "$INBOX"/*.json; do
