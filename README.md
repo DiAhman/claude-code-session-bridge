@@ -21,6 +21,8 @@ When you're working across multiple repos — a shared library and its consumer 
 
 The Library agent answers questions about breaking changes. The Consumer agent asks what API replaced a deprecated function. The agent responds with its **full context** — no approximation, no extra API cost.
 
+https://github.com/user-attachments/assets/ce893322-5749-42be-9973-e36e60b969a6
+
 ## Getting Started
 
 ### 1. Install
