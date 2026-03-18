@@ -66,11 +66,17 @@ for SESSION_DIR in "$SESSIONS_DIR"/*/; do
 
     MSG_ID=$(jq -r '.id' "$MSG_FILE")
     FROM_ID=$(jq -r '.from' "$MSG_FILE")
+    TO_ID=$(jq -r '.to' "$MSG_FILE")
     MSG_TYPE=$(jq -r '.type' "$MSG_FILE")
     CONTENT=$(jq -r '.content' "$MSG_FILE")
     FROM_PROJECT=$(jq -r '.metadata.fromProject // "unknown"' "$MSG_FILE")
-    TO_ID=$(jq -r '.to' "$MSG_FILE")
     IN_REPLY_TO=$(jq -r '.inReplyTo // ""' "$MSG_FILE")
+
+    # Skip messages that are in someone else's inbox (not addressed to this session)
+    # This prevents echo: reading your own response from the peer's inbox
+    if [ "$TO_ID" != "$SESSION_ID" ]; then
+      continue
+    fi
 
     # Find the project name for the recipient
     TO_NAME="$SESSION_NAME"

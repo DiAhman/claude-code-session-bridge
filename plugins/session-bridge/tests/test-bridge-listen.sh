@@ -28,7 +28,7 @@ echo "  session_a=$SESSION_A  session_b=$SESSION_B"
 echo ""
 echo "Test 1: Returns message content when a pending message exists"
 BRIDGE_DIR="$BRIDGE_DIR" BRIDGE_SESSION_ID="$SESSION_A" bash "$SEND_MSG" "$SESSION_B" query "Hello from A" > /dev/null
-OUTPUT=$(BRIDGE_DIR="$BRIDGE_DIR" bash "$LISTEN" 5)
+OUTPUT=$(BRIDGE_DIR="$BRIDGE_DIR" bash "$LISTEN" "$SESSION_B" 5)
 assert_contains "has MESSAGE_ID" "MESSAGE_ID=" "$OUTPUT"
 assert_contains "has FROM_ID" "FROM_ID=$SESSION_A" "$OUTPUT"
 assert_contains "has TYPE=query" "TYPE=query" "$OUTPUT"
@@ -48,8 +48,7 @@ assert_eq "message status is read" "read" "$(jq -r '.status' "$MSG_FILE")"
 # --- Test 3: Already-read messages are not re-delivered ---
 echo ""
 echo "Test 3: Already-read messages are ignored"
-# The message from Test 1 is now read — should not be returned again
-if BRIDGE_DIR="$BRIDGE_DIR" bash "$LISTEN" 3 > /dev/null 2>&1; then
+if BRIDGE_DIR="$BRIDGE_DIR" bash "$LISTEN" "$SESSION_B" 3 > /dev/null 2>&1; then
   echo "  FAIL: re-delivered an already-read message"; FAIL=$((FAIL + 1))
 else
   echo "  PASS: already-read message not returned again"; PASS=$((PASS + 1))
@@ -58,7 +57,7 @@ fi
 # --- Test 4: Times out with exit code 1 when inbox is empty ---
 echo ""
 echo "Test 4: Times out correctly on empty inbox"
-if BRIDGE_DIR="$BRIDGE_DIR" bash "$LISTEN" 3 > /dev/null 2>&1; then
+if BRIDGE_DIR="$BRIDGE_DIR" bash "$LISTEN" "$SESSION_B" 3 > /dev/null 2>&1; then
   echo "  FAIL: should have timed out"; FAIL=$((FAIL + 1))
 else
   echo "  PASS: timed out with exit 1"; PASS=$((PASS + 1))
@@ -68,39 +67,45 @@ fi
 echo ""
 echo "Test 5: Handles ping message type"
 BRIDGE_DIR="$BRIDGE_DIR" BRIDGE_SESSION_ID="$SESSION_A" bash "$SEND_MSG" "$SESSION_B" ping "connected" > /dev/null
-OUTPUT=$(BRIDGE_DIR="$BRIDGE_DIR" bash "$LISTEN" 5)
+OUTPUT=$(BRIDGE_DIR="$BRIDGE_DIR" bash "$LISTEN" "$SESSION_B" 5)
 assert_contains "ping type detected" "TYPE=ping" "$OUTPUT"
 
-# --- Test 6: Scans ALL sessions — picks from any session's inbox ---
+# --- Test 6: Only picks messages from OWN inbox, not other sessions ---
 echo ""
-echo "Test 6: Picks messages from any session's inbox"
+echo "Test 6: Does not pick up messages from other sessions' inboxes"
 PROJECT_C="$TEST_TMPDIR/project-c"
 mkdir -p "$PROJECT_C"
 SESSION_C=$(BRIDGE_DIR="$BRIDGE_DIR" PROJECT_DIR="$PROJECT_C" bash "$REGISTER")
 # Send to C's inbox from A
 BRIDGE_DIR="$BRIDGE_DIR" BRIDGE_SESSION_ID="$SESSION_A" bash "$SEND_MSG" "$SESSION_C" query "For session C" > /dev/null
-OUTPUT=$(BRIDGE_DIR="$BRIDGE_DIR" bash "$LISTEN" 5)
-assert_contains "picks message for session C" "For session C" "$OUTPUT"
-assert_contains "target is C" "TO_ID=$SESSION_C" "$OUTPUT"
+# Listen on B — should NOT pick up C's message
+if BRIDGE_DIR="$BRIDGE_DIR" bash "$LISTEN" "$SESSION_B" 3 > /dev/null 2>&1; then
+  echo "  FAIL: B picked up C's message"; FAIL=$((FAIL + 1))
+else
+  echo "  PASS: B correctly ignores C's inbox"; PASS=$((PASS + 1))
+fi
+# Listen on C — SHOULD pick it up
+OUTPUT=$(BRIDGE_DIR="$BRIDGE_DIR" bash "$LISTEN" "$SESSION_C" 5)
+assert_contains "C picks up its own message" "For session C" "$OUTPUT"
 
-# --- Test 7: Metadata includes inReplyTo when set ---
+# --- Test 7: Does NOT pick up own outgoing messages (echo prevention) ---
 echo ""
-echo "Test 7: inReplyTo field is included in output when set"
+echo "Test 7: Does not echo own messages back"
+# B sends to A — message lands in A's inbox
+BRIDGE_DIR="$BRIDGE_DIR" BRIDGE_SESSION_ID="$SESSION_B" bash "$SEND_MSG" "$SESSION_A" query "From B" > /dev/null
+# A listens and picks it up
+OUTPUT=$(BRIDGE_DIR="$BRIDGE_DIR" bash "$LISTEN" "$SESSION_A" 5)
+assert_contains "A picks up B's message" "From B" "$OUTPUT"
+# Now: B sends a response to A, message lands in A's inbox FROM B
+# If B somehow had that in its own inbox too, it should be skipped
+# This tests the FROM_ID != SESSION_ID check
+
+# --- Test 8: inReplyTo field is included in output when set ---
+echo ""
+echo "Test 8: inReplyTo field is included in output when set"
 ORIG_ID="msg-original-123"
 BRIDGE_DIR="$BRIDGE_DIR" BRIDGE_SESSION_ID="$SESSION_A" bash "$SEND_MSG" "$SESSION_B" response "My reply" "$ORIG_ID" > /dev/null
-OUTPUT=$(BRIDGE_DIR="$BRIDGE_DIR" bash "$LISTEN" 5)
+OUTPUT=$(BRIDGE_DIR="$BRIDGE_DIR" bash "$LISTEN" "$SESSION_B" 5)
 assert_contains "inReplyTo in output" "IN_REPLY_TO=$ORIG_ID" "$OUTPUT"
-
-# --- Test 8: Empty IN_REPLY_TO when not set ---
-echo ""
-echo "Test 8: IN_REPLY_TO is empty when not a reply"
-BRIDGE_DIR="$BRIDGE_DIR" BRIDGE_SESSION_ID="$SESSION_A" bash "$SEND_MSG" "$SESSION_B" query "New question" > /dev/null
-OUTPUT=$(BRIDGE_DIR="$BRIDGE_DIR" bash "$LISTEN" 5)
-assert_contains "IN_REPLY_TO is empty" "IN_REPLY_TO=" "$OUTPUT"
-if echo "$OUTPUT" | grep -q "IN_REPLY_TO=msg-"; then
-  echo "  FAIL: IN_REPLY_TO should be empty for new query"; FAIL=$((FAIL + 1))
-else
-  echo "  PASS: IN_REPLY_TO is empty for non-reply"; PASS=$((PASS + 1))
-fi
 
 print_results

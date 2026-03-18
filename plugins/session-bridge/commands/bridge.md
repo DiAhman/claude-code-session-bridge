@@ -77,12 +77,14 @@ bash "${CLAUDE_PLUGIN_ROOT}/scripts/register.sh"
 ```
 Display: "Bridge auto-started! Session ID: <id>". Then proceed to the loop.
 
+Store the session ID in a variable (e.g., `MY_SESSION`) for use throughout the loop.
+
 The loop:
 
 1. Tell the user: "Listening for peer messages... (Ctrl+C to stop)"
-2. Run the listen script (this BLOCKS until a message arrives):
+2. Run the listen script with YOUR session ID (this BLOCKS until a message arrives in YOUR inbox only):
    ```bash
-   bash "${CLAUDE_PLUGIN_ROOT}/scripts/bridge-listen.sh"
+   bash "${CLAUDE_PLUGIN_ROOT}/scripts/bridge-listen.sh" "$MY_SESSION"
    ```
 3. When a message arrives, parse the output:
    - Lines before `---` are metadata (MESSAGE_ID, FROM_ID, TO_ID, FROM_PROJECT, TYPE, IN_REPLY_TO)
