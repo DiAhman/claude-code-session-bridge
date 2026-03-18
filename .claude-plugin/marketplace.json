@@ -8,7 +8,7 @@
     {
       "name": "session-bridge",
       "description": "Peer-to-peer communication between Claude Code sessions on the same machine",
-      "version": "0.1.0",
+      "version": "0.1.1",
       "author": {
         "name": "Shreyas Patil"
       },

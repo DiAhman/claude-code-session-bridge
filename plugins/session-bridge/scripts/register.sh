@@ -12,7 +12,7 @@ PROJECT_DIR="${PROJECT_DIR:-$(pwd)}"
 PROJECT_NAME=$(basename "$PROJECT_DIR")
 BRIDGE_SESSION_FILE="$PROJECT_DIR/.claude/bridge-session"
 
-# Reuse existing session if it still has a valid directory
+# Reuse existing session if the bridge-session file exists and points to a valid session
 if [ -f "$BRIDGE_SESSION_FILE" ]; then
   EXISTING_ID=$(cat "$BRIDGE_SESSION_FILE")
   EXISTING_DIR="$BRIDGE_DIR/sessions/$EXISTING_ID"
