@@ -38,6 +38,29 @@ assert_contains() {
   fi
 }
 
+assert_json_field() {
+  local desc="$1" file="$2" field="$3" expected="$4"
+  if [ ! -f "$file" ]; then
+    echo "  FAIL: $desc (file not found: $file)"; FAIL=$((FAIL + 1)); return
+  fi
+  local actual
+  actual=$(jq -r "$field" "$file" 2>/dev/null)
+  if [ "$actual" = "$expected" ]; then
+    echo "  PASS: $desc"; PASS=$((PASS + 1))
+  else
+    echo "  FAIL: $desc"; echo "    expected: $expected"; echo "    actual:   $actual"; FAIL=$((FAIL + 1))
+  fi
+}
+
+assert_not_empty() {
+  local desc="$1" value="$2"
+  if [ -n "$value" ]; then
+    echo "  PASS: $desc"; PASS=$((PASS + 1))
+  else
+    echo "  FAIL: $desc (value is empty)"; FAIL=$((FAIL + 1))
+  fi
+}
+
 print_results() {
   echo ""
   echo "Results: $PASS passed, $FAIL failed"
