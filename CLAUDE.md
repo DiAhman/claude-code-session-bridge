@@ -15,6 +15,16 @@ plugins/session-bridge/
   test.sh                        # Test runner
 ```
 
+## Versioning
+
+Semantic versioning: `0.MINOR.PATCH`. Currently on `0.2.x`.
+
+- **Patch bump** (`0.2.x → 0.2.x+1`): bug fixes, new scripts, test additions, doc updates
+- **Minor bump** (`0.2.x → 0.3.0`): breaking protocol changes, new message types that break backward compat
+- **Do NOT bump major** until user says so
+
+Version lives in `plugins/session-bridge/.claude-plugin/plugin.json`. Bump it on every commit that changes runtime behavior (scripts, hooks, commands, skill). Don't bump for test-only or doc-only changes.
+
 ## Development
 
 ### Running Tests
