@@ -12,6 +12,18 @@
         ]
       }
     ],
+    "PostToolUse": [
+      {
+        "matcher": "",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash \"${CLAUDE_PLUGIN_ROOT}/scripts/check-inbox.sh\" --rate-limited",
+            "async": false
+          }
+        ]
+      }
+    ],
     "SessionEnd": [
       {
         "matcher": "",
