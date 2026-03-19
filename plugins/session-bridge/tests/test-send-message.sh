@@ -110,4 +110,60 @@ else
   echo "  FAIL: invalid timestamp format: $TS"; FAIL=$((FAIL + 1))
 fi
 
+echo ""
+echo "--- v2 protocol tests ---"
+
+# Setup project for v2 tests
+V2_TMPDIR=$(mktemp -d)
+V2_BRIDGE="$V2_TMPDIR/bridge"
+V2_PROJ_A="$V2_TMPDIR/app-a"
+V2_PROJ_B="$V2_TMPDIR/app-b"
+mkdir -p "$V2_PROJ_A" "$V2_PROJ_B"
+
+BRIDGE_DIR="$V2_BRIDGE" bash "$PLUGIN_DIR/scripts/project-create.sh" "v2-proj" > /dev/null
+V2_SESS_A=$(BRIDGE_DIR="$V2_BRIDGE" PROJECT_DIR="$V2_PROJ_A" bash "$PLUGIN_DIR/scripts/project-join.sh" "v2-proj" --role specialist --specialty "app")
+V2_SESS_B=$(BRIDGE_DIR="$V2_BRIDGE" PROJECT_DIR="$V2_PROJ_B" bash "$PLUGIN_DIR/scripts/project-join.sh" "v2-proj" --role specialist --specialty "auth")
+
+# Test V1: Project-scoped message delivery
+MSG_ID=$(BRIDGE_DIR="$V2_BRIDGE" BRIDGE_SESSION_ID="$V2_SESS_A" bash "$SEND_MSG" "$V2_SESS_B" query "What changed?" --urgency high)
+assert_not_empty "v2 message sent" "$MSG_ID"
+V2_MSG_FILE="$V2_BRIDGE/projects/v2-proj/sessions/$V2_SESS_B/inbox/$MSG_ID.json"
+assert_file_exists "message in project inbox" "$V2_MSG_FILE"
+
+# Test V2: protocolVersion in message
+assert_json_field "has protocolVersion" "$V2_MSG_FILE" '.protocolVersion' "2.0"
+
+# Test V3: urgency field
+assert_json_field "urgency set to high" "$V2_MSG_FILE" '.metadata.urgency' "high"
+
+# Test V4: conversationId auto-created for query
+CONV_ID=$(jq -r '.conversationId' "$V2_MSG_FILE")
+assert_eq "conversationId not null" "true" "$([ "$CONV_ID" != "null" ] && echo true || echo false)"
+CONV_FILE="$V2_BRIDGE/projects/v2-proj/conversations/$CONV_ID.json"
+assert_file_exists "conversation file created" "$CONV_FILE"
+assert_json_field "conversation status is waiting" "$CONV_FILE" '.status' "waiting"
+
+# Test V5: response within conversation (named args only)
+RESP_ID=$(BRIDGE_DIR="$V2_BRIDGE" BRIDGE_SESSION_ID="$V2_SESS_B" bash "$SEND_MSG" "$V2_SESS_A" response "Nothing changed" --conversation "$CONV_ID" --reply-to "$MSG_ID")
+assert_file_exists "response delivered" "$V2_BRIDGE/projects/v2-proj/sessions/$V2_SESS_A/inbox/$RESP_ID.json"
+assert_json_field "response has conversationId" "$V2_BRIDGE/projects/v2-proj/sessions/$V2_SESS_A/inbox/$RESP_ID.json" '.conversationId' "$CONV_ID"
+
+# Test V6: task-complete resolves conversation
+COMPLETE_ID=$(BRIDGE_DIR="$V2_BRIDGE" BRIDGE_SESSION_ID="$V2_SESS_B" bash "$SEND_MSG" "$V2_SESS_A" task-complete "All done" --conversation "$CONV_ID" --reply-to "$MSG_ID")
+assert_json_field "conversation resolved" "$CONV_FILE" '.status' "resolved"
+
+# Test V7: ping has null conversationId
+PING_ID=$(BRIDGE_DIR="$V2_BRIDGE" BRIDGE_SESSION_ID="$V2_SESS_A" bash "$SEND_MSG" "$V2_SESS_B" ping "hello")
+PING_FILE="$V2_BRIDGE/projects/v2-proj/sessions/$V2_SESS_B/inbox/$PING_ID.json"
+assert_json_field "ping conversationId is null" "$PING_FILE" '.conversationId' "null"
+
+# Test V8: default urgency is normal
+assert_json_field "ping default urgency" "$PING_FILE" '.metadata.urgency' "normal"
+
+# Test V9: fromRole in metadata
+assert_json_field "fromRole set" "$V2_MSG_FILE" '.metadata.fromRole' "specialist"
+
+# Cleanup
+rm -rf "$V2_TMPDIR"
+
 print_results
