@@ -127,4 +127,98 @@ BRIDGE_DIR="$BRIDGE_DIR" PROJECT_DIR="$PROJECT_F" bash "$CLEANUP"
 
 assert_dir_exists "active session B not cleaned" "$SESSION_B_DIR"
 
+echo ""
+echo "--- project-scoped cleanup tests ---"
+
+# Helper to kill all watcher processes in a bridge dir
+kill_watchers() {
+  local bridge="$1"
+  for pidfile in "$bridge"/projects/*/sessions/*/watcher.pid; do
+    [ -f "$pidfile" ] || continue
+    kill "$(cat "$pidfile")" 2>/dev/null || true
+    rm -f "$pidfile"
+  done
+}
+
+V2_TMPDIR=$(mktemp -d)
+V2_BRIDGE="$V2_TMPDIR/bridge"
+V2_PROJ_A="$V2_TMPDIR/proj-a"
+V2_PROJ_B="$V2_TMPDIR/proj-b"
+mkdir -p "$V2_PROJ_A" "$V2_PROJ_B"
+
+BRIDGE_DIR="$V2_BRIDGE" bash "$PLUGIN_DIR/scripts/project-create.sh" "cleanup-proj" > /dev/null
+V2_SID_A=$(BRIDGE_DIR="$V2_BRIDGE" PROJECT_DIR="$V2_PROJ_A" bash "$PLUGIN_DIR/scripts/project-join.sh" "cleanup-proj")
+V2_SID_B=$(BRIDGE_DIR="$V2_BRIDGE" PROJECT_DIR="$V2_PROJ_B" bash "$PLUGIN_DIR/scripts/project-join.sh" "cleanup-proj")
+
+# Send a message so they know each other
+BRIDGE_DIR="$V2_BRIDGE" BRIDGE_SESSION_ID="$V2_SID_A" bash "$PLUGIN_DIR/scripts/send-message.sh" "$V2_SID_B" ping "hello" > /dev/null
+
+# Create an open conversation initiated by A
+CONV_ID=$(BRIDGE_DIR="$V2_BRIDGE" BRIDGE_SESSION_ID="$V2_SID_A" bash "$PLUGIN_DIR/scripts/send-message.sh" "$V2_SID_B" query "What is the status?" --urgency normal)
+CONV_MSG_FILE="$V2_BRIDGE/projects/cleanup-proj/sessions/$V2_SID_B/inbox/$CONV_ID.json"
+CONV_ID_FROM_MSG=""
+if [ -f "$CONV_MSG_FILE" ]; then
+  CONV_ID_FROM_MSG=$(jq -r '.conversationId' "$CONV_MSG_FILE")
+fi
+
+# --- Test 7: Project session dir removed ---
+echo ""
+echo "Test 7: Project-scoped cleanup removes session directory"
+BRIDGE_DIR="$V2_BRIDGE" PROJECT_DIR="$V2_PROJ_A" bash "$CLEANUP"
+assert_eq "project session dir removed" "false" "$([ -d "$V2_BRIDGE/projects/cleanup-proj/sessions/$V2_SID_A" ] && echo true || echo false)"
+
+# --- Test 8: bridge-session pointer removed ---
+echo ""
+echo "Test 8: Project-scoped cleanup removes bridge-session pointer"
+assert_eq "bridge-session pointer removed" "false" "$([ -f "$V2_PROJ_A/.claude/bridge-session" ] && echo true || echo false)"
+
+# --- Test 9: Peer B notified via session-ended ---
+echo ""
+echo "Test 9: Project peer receives session-ended notification"
+FOUND_ENDED=false
+for F in "$V2_BRIDGE/projects/cleanup-proj/sessions/$V2_SID_B/inbox"/msg-*.json; do
+  [ -f "$F" ] || continue
+  if [ "$(jq -r '.type' "$F")" = "session-ended" ]; then
+    FOUND_ENDED=true
+    break
+  fi
+done
+if $FOUND_ENDED; then
+  echo "  PASS: peer notified via session-ended"; PASS=$((PASS + 1))
+else
+  echo "  FAIL: peer not notified"; FAIL=$((FAIL + 1))
+fi
+
+# --- Test 10: Open conversations initiated by A are resolved ---
+echo ""
+echo "Test 10: Open conversations initiated by departing session are resolved"
+if [ -n "$CONV_ID_FROM_MSG" ] && [ "$CONV_ID_FROM_MSG" != "null" ]; then
+  CONV_FILE="$V2_BRIDGE/projects/cleanup-proj/conversations/$CONV_ID_FROM_MSG.json"
+  if [ -f "$CONV_FILE" ]; then
+    CONV_STATUS=$(jq -r '.status' "$CONV_FILE")
+    if [ "$CONV_STATUS" = "resolved" ]; then
+      echo "  PASS: conversation resolved on cleanup"; PASS=$((PASS + 1))
+    else
+      echo "  FAIL: conversation status is '$CONV_STATUS', expected 'resolved'"; FAIL=$((FAIL + 1))
+    fi
+  else
+    echo "  FAIL: conversation file not found"; FAIL=$((FAIL + 1))
+  fi
+else
+  echo "  FAIL: no conversation ID found in message"; FAIL=$((FAIL + 1))
+fi
+
+# --- Test 11: Conversation files NOT deleted (shared project state) ---
+echo ""
+echo "Test 11: Conversation files preserved (shared project state)"
+CONV_COUNT=$(find "$V2_BRIDGE/projects/cleanup-proj/conversations" -name "*.json" 2>/dev/null | wc -l | tr -d ' ')
+if [ "$CONV_COUNT" -gt 0 ]; then
+  echo "  PASS: conversation files preserved ($CONV_COUNT files)"; PASS=$((PASS + 1))
+else
+  echo "  FAIL: conversation files were deleted"; FAIL=$((FAIL + 1))
+fi
+
+kill_watchers "$V2_BRIDGE"
+rm -rf "$V2_TMPDIR"
+
 print_results

@@ -4,7 +4,8 @@
 #
 # Strategy:
 # 1. Try .claude/bridge-session in current directory (fast path)
-# 2. Scan all session manifests for one whose projectPath is a parent of $(pwd)
+# 2. Scan all legacy session manifests for one whose projectPath is a parent of $(pwd)
+# 3. Scan all project-scoped session manifests for matching projectPath
 #
 # Outputs: session ID to stdout, or exits 1 if not found.
 set -euo pipefail
@@ -18,15 +19,25 @@ if [ -f "$CURRENT_DIR/.claude/bridge-session" ]; then
   exit 0
 fi
 
-# Fallback: scan all session manifests for one whose projectPath is a parent of current dir.
-# e.g., if we're at /projects/my-lib/src/main/kotlin and a session has
-# projectPath=/projects/my-lib, that's a match.
+# Fallback: scan all legacy session manifests for one whose projectPath is a parent of current dir.
 for MANIFEST in "$BRIDGE_DIR"/sessions/*/manifest.json; do
   [ -f "$MANIFEST" ] || continue
   PROJ_PATH=$(jq -r '.projectPath // ""' "$MANIFEST" 2>/dev/null)
   [ -n "$PROJ_PATH" ] || continue
 
-  # Check: is our current directory inside (or equal to) this project's path?
+  case "$CURRENT_DIR" in
+    "$PROJ_PATH"|"$PROJ_PATH"/*)
+      jq -r '.sessionId' "$MANIFEST"
+      exit 0
+      ;;
+  esac
+done
+
+# Project-scoped scan
+for MANIFEST in "$BRIDGE_DIR"/projects/*/sessions/*/manifest.json; do
+  [ -f "$MANIFEST" ] || continue
+  PROJ_PATH=$(jq -r '.projectPath // ""' "$MANIFEST" 2>/dev/null)
+  [ -n "$PROJ_PATH" ] || continue
   case "$CURRENT_DIR" in
     "$PROJ_PATH"|"$PROJ_PATH"/*)
       jq -r '.sessionId' "$MANIFEST"

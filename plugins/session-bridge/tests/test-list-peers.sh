@@ -59,4 +59,59 @@ assert_contains "output contains stale session ID" "$STALE_ID" "$OUTPUT"
 assert_contains "output contains stale status" "stale" "$OUTPUT"
 assert_contains "output contains stale project name" "old-project" "$OUTPUT"
 
+echo ""
+echo "--- project-scoped list-peers tests ---"
+
+# Helper to kill all watcher processes in a bridge dir
+kill_watchers() {
+  local bridge="$1"
+  for pidfile in "$bridge"/projects/*/sessions/*/watcher.pid; do
+    [ -f "$pidfile" ] || continue
+    kill "$(cat "$pidfile")" 2>/dev/null || true
+    rm -f "$pidfile"
+  done
+}
+
+V2_TMPDIR=$(mktemp -d)
+V2_BRIDGE="$V2_TMPDIR/bridge"
+V2_PROJ_A="$V2_TMPDIR/app-a"
+V2_PROJ_B="$V2_TMPDIR/app-b"
+mkdir -p "$V2_PROJ_A" "$V2_PROJ_B"
+
+BRIDGE_DIR="$V2_BRIDGE" bash "$PLUGIN_DIR/scripts/project-create.sh" "peers-proj" > /dev/null
+V2_SID_A=$(BRIDGE_DIR="$V2_BRIDGE" PROJECT_DIR="$V2_PROJ_A" bash "$PLUGIN_DIR/scripts/project-join.sh" "peers-proj" --role orchestrator --specialty "coordination")
+V2_SID_B=$(BRIDGE_DIR="$V2_BRIDGE" PROJECT_DIR="$V2_PROJ_B" bash "$PLUGIN_DIR/scripts/project-join.sh" "peers-proj" --role specialist --specialty "auth, JWT")
+
+# --- Test 4: Project sessions listed with role and specialty ---
+echo ""
+echo "Test 4: Project sessions listed with role and specialty columns"
+OUTPUT=$(BRIDGE_DIR="$V2_BRIDGE" bash "$LIST_PEERS")
+assert_contains "output shows project name" "peers-proj" "$OUTPUT"
+assert_contains "output contains session A" "$V2_SID_A" "$OUTPUT"
+assert_contains "output contains session B" "$V2_SID_B" "$OUTPUT"
+assert_contains "output shows orchestrator role" "orchestrator" "$OUTPUT"
+assert_contains "output shows specialist role" "specialist" "$OUTPUT"
+assert_contains "output shows specialty" "auth, JWT" "$OUTPUT"
+
+# --- Test 5: --project filter ---
+echo ""
+echo "Test 5: --project flag filters to specific project"
+BRIDGE_DIR="$V2_BRIDGE" bash "$PLUGIN_DIR/scripts/project-create.sh" "other-proj" > /dev/null
+OTHER_DIR="$V2_TMPDIR/other-app"
+mkdir -p "$OTHER_DIR"
+V2_SID_C=$(BRIDGE_DIR="$V2_BRIDGE" PROJECT_DIR="$OTHER_DIR" bash "$PLUGIN_DIR/scripts/project-join.sh" "other-proj" --role specialist)
+
+OUTPUT=$(BRIDGE_DIR="$V2_BRIDGE" bash "$LIST_PEERS" --project "peers-proj")
+assert_contains "filtered output shows peers-proj" "peers-proj" "$OUTPUT"
+assert_contains "filtered output shows session A" "$V2_SID_A" "$OUTPUT"
+# Session C is in other-proj, should not appear
+if echo "$OUTPUT" | grep -q "$V2_SID_C"; then
+  echo "  FAIL: other project session leaked through filter"; FAIL=$((FAIL + 1))
+else
+  echo "  PASS: other project session correctly filtered out"; PASS=$((PASS + 1))
+fi
+
+kill_watchers "$V2_BRIDGE"
+rm -rf "$V2_TMPDIR"
+
 print_results

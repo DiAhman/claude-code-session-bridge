@@ -90,4 +90,68 @@ echo "Test 7: Fast path — uses bridge-session file directly when available"
 FOUND=$(BRIDGE_DIR="$BRIDGE_DIR" PROJECT_DIR="$PROJECT_DIR" bash "$GET_ID")
 assert_eq "fast path works" "$SESSION_ID" "$FOUND"
 
+echo ""
+echo "--- project-scoped get-session-id tests ---"
+
+# Helper to kill all watcher processes in a bridge dir
+kill_watchers() {
+  local bridge="$1"
+  for pidfile in "$bridge"/projects/*/sessions/*/watcher.pid; do
+    [ -f "$pidfile" ] || continue
+    kill "$(cat "$pidfile")" 2>/dev/null || true
+    rm -f "$pidfile"
+  done
+}
+
+V2_TMPDIR=$(mktemp -d)
+V2_BRIDGE="$V2_TMPDIR/bridge"
+V2_PROJ_DIR="$V2_TMPDIR/v2-app"
+mkdir -p "$V2_PROJ_DIR"
+
+BRIDGE_DIR="$V2_BRIDGE" bash "$PLUGIN_DIR/scripts/project-create.sh" "id-test-proj" > /dev/null
+V2_SID=$(BRIDGE_DIR="$V2_BRIDGE" PROJECT_DIR="$V2_PROJ_DIR" bash "$PLUGIN_DIR/scripts/project-join.sh" "id-test-proj" --role specialist)
+
+# --- Test 8: Finds project-scoped session from project root ---
+echo ""
+echo "Test 8: Finds project-scoped session from project root"
+FOUND=$(BRIDGE_DIR="$V2_BRIDGE" PROJECT_DIR="$V2_PROJ_DIR" bash "$GET_ID")
+assert_eq "finds project session from root" "$V2_SID" "$FOUND"
+
+# --- Test 9: Finds project-scoped session from subdirectory ---
+echo ""
+echo "Test 9: Finds project-scoped session from subdirectory"
+V2_SUBDIR="$V2_PROJ_DIR/src/lib"
+mkdir -p "$V2_SUBDIR"
+FOUND=$(BRIDGE_DIR="$V2_BRIDGE" PROJECT_DIR="$V2_SUBDIR" bash "$GET_ID")
+assert_eq "finds project session from subdir" "$V2_SID" "$FOUND"
+
+# --- Test 10: Unrelated directory does not find project session ---
+echo ""
+echo "Test 10: Unrelated directory does not find project-scoped session"
+UNRELATED="$V2_TMPDIR/unrelated-dir"
+mkdir -p "$UNRELATED"
+if BRIDGE_DIR="$V2_BRIDGE" PROJECT_DIR="$UNRELATED" bash "$GET_ID" 2>/dev/null; then
+  echo "  FAIL: found a session for unrelated directory"; FAIL=$((FAIL + 1))
+else
+  echo "  PASS: correctly returns nothing for unrelated directory"; PASS=$((PASS + 1))
+fi
+
+# --- Test 11: Fast path via bridge-session file works for project sessions ---
+echo ""
+echo "Test 11: Fast path works for project-scoped sessions"
+# bridge-session file should have been created by project-join.sh
+assert_file_exists "bridge-session exists" "$V2_PROJ_DIR/.claude/bridge-session"
+FOUND=$(BRIDGE_DIR="$V2_BRIDGE" PROJECT_DIR="$V2_PROJ_DIR" bash "$GET_ID")
+assert_eq "fast path returns correct ID" "$V2_SID" "$FOUND"
+
+# --- Test 12: Finds session via project scan even without bridge-session file ---
+echo ""
+echo "Test 12: Finds session via project-scoped scan without bridge-session file"
+rm -f "$V2_PROJ_DIR/.claude/bridge-session"
+FOUND=$(BRIDGE_DIR="$V2_BRIDGE" PROJECT_DIR="$V2_PROJ_DIR" bash "$GET_ID")
+assert_eq "project scan finds session" "$V2_SID" "$FOUND"
+
+kill_watchers "$V2_BRIDGE"
+rm -rf "$V2_TMPDIR"
+
 print_results
