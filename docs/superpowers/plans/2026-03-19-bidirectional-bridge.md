@@ -1364,8 +1364,8 @@ Expected: All pass
 - [ ] **Step 6: Commit**
 
 ```bash
-git add plugins/session-bridge/scripts/bridge-listen.sh plugins/session-bridge/tests/test-bridge-listen.sh
-git commit -m "feat: enhance bridge-listen.sh with inotifywait and project-scoped paths"
+git add plugins/session-bridge/scripts/bridge-listen.sh plugins/session-bridge/scripts/bridge-receive.sh plugins/session-bridge/tests/test-bridge-listen.sh
+git commit -m "feat: enhance bridge-listen.sh and bridge-receive.sh with inotifywait and project-scoped paths"
 ```
 
 ---
@@ -1916,14 +1916,14 @@ OUTPUT=$(BRIDGE_DIR="$BRIDGE_DIR" bash "$LISTEN" "$FW_ID" 5)
 assert_contains "framework sees query" "Bug in shared utils" "$OUTPUT"
 
 # Framework responds
-BRIDGE_DIR="$BRIDGE_DIR" BRIDGE_SESSION_ID="$FW_ID" bash "$SEND_MSG" "$DEV_ID" task-complete "Fixed: updated validate() in utils.go" --conversation "$FW_CONV" "$FW_QUERY" > /dev/null
+BRIDGE_DIR="$BRIDGE_DIR" BRIDGE_SESSION_ID="$FW_ID" bash "$SEND_MSG" "$DEV_ID" task-complete "Fixed: updated validate() in utils.go" --conversation "$FW_CONV" --reply-to "$FW_QUERY" > /dev/null
 
 # Dev picks up framework's response
 OUTPUT=$(BRIDGE_DIR="$BRIDGE_DIR" bash "$RECEIVE" "$DEV_ID" "$FW_QUERY" 10)
 assert_contains "dev gets framework response" "Fixed: updated validate()" "$OUTPUT"
 
 # Dev completes task back to orchestrator
-BRIDGE_DIR="$BRIDGE_DIR" BRIDGE_SESSION_ID="$DEV_ID" bash "$SEND_MSG" "$ORCH_ID" task-complete "Issue #123 fixed, framework utils updated" --conversation "$TASK_CONV" "$TASK_MSG" > /dev/null
+BRIDGE_DIR="$BRIDGE_DIR" BRIDGE_SESSION_ID="$DEV_ID" bash "$SEND_MSG" "$ORCH_ID" task-complete "Issue #123 fixed, framework utils updated" --conversation "$TASK_CONV" --reply-to "$TASK_MSG" > /dev/null
 
 # Orchestrator picks up completion
 OUTPUT=$(BRIDGE_DIR="$BRIDGE_DIR" bash "$RECEIVE" "$ORCH_ID" "$TASK_MSG" 10)
@@ -1962,8 +1962,8 @@ assert_contains "X sees Y's query" "frontend components" "$OUT_X"
 Q1_CONV=$(jq -r '.conversationId' "$BRIDGE_DIR/projects/bidir-test/sessions/$SID_Y/inbox/$Q1_ID.json")
 Q2_CONV=$(jq -r '.conversationId' "$BRIDGE_DIR/projects/bidir-test/sessions/$SID_X/inbox/$Q2_ID.json")
 
-BRIDGE_DIR="$BRIDGE_DIR" BRIDGE_SESSION_ID="$SID_Y" bash "$SEND_MSG" "$SID_X" response "Returns JSON with userId field" --conversation "$Q1_CONV" "$Q1_ID" > /dev/null
-BRIDGE_DIR="$BRIDGE_DIR" BRIDGE_SESSION_ID="$SID_X" bash "$SEND_MSG" "$SID_Y" response "UserCard and ProfilePage use it" --conversation "$Q2_CONV" "$Q2_ID" > /dev/null
+BRIDGE_DIR="$BRIDGE_DIR" BRIDGE_SESSION_ID="$SID_Y" bash "$SEND_MSG" "$SID_X" response "Returns JSON with userId field" --conversation "$Q1_CONV" --reply-to "$Q1_ID" > /dev/null
+BRIDGE_DIR="$BRIDGE_DIR" BRIDGE_SESSION_ID="$SID_X" bash "$SEND_MSG" "$SID_Y" response "UserCard and ProfilePage use it" --conversation "$Q2_CONV" --reply-to "$Q2_ID" > /dev/null
 
 OUT_X2=$(BRIDGE_DIR="$BRIDGE_DIR" bash "$RECEIVE" "$SID_X" "$Q1_ID" 10)
 assert_contains "X gets response about API" "userId field" "$OUT_X2"
