@@ -264,7 +264,7 @@ Unregister and clean up.
 
 1. Run:
    ```bash
-   bash "${CLAUDE_PLUGIN_ROOT}/scripts/cleanup.sh"
+   BRIDGE_CLEANUP_CONFIRMED=1 bash "${CLAUDE_PLUGIN_ROOT}/scripts/cleanup.sh"
    ```
 2. Tell the user: "Bridge stopped. Connected peers have been notified."
 

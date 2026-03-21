@@ -1,6 +1,12 @@
 #!/usr/bin/env bash
 # scripts/cleanup.sh — Clean up session on exit. Notify connected peers.
 # Supports both legacy (sessions/) and project-scoped (projects/<name>/sessions/) sessions.
+#
+# IMPORTANT: For project-scoped sessions, this script checks whether the session
+# is truly ending by looking for a .bridge-cleanup-confirmed marker file. Without
+# it, the script only kills the watcher (lightweight cleanup) but does NOT remove
+# the session directory or notify peers. This prevents spurious session-ended
+# notifications during context compaction and other non-terminal lifecycle events.
 set -euo pipefail
 
 BRIDGE_DIR="${BRIDGE_DIR:-$HOME/.claude/session-bridge}"
@@ -63,7 +69,26 @@ fi
 
 if [ -n "$PROJECT_ID" ]; then
   # --- Project-scoped cleanup ---
+  # Only do full cleanup (notify peers, resolve conversations, remove session dir)
+  # if this is a confirmed cleanup via /bridge stop or truly terminal event.
+  # The SessionEnd hook fires during compaction and other non-terminal events —
+  # doing full cleanup there causes spurious session-ended notifications.
+  #
+  # Confirmed cleanup: BRIDGE_CLEANUP_CONFIRMED=1 env var (set by /bridge stop)
+  # or the session dir no longer has a running watcher (session truly dead).
+  CONFIRMED="${BRIDGE_CLEANUP_CONFIRMED:-0}"
 
+  # Heuristic: if the watcher is still running, this is likely a non-terminal event
+  if [ "$CONFIRMED" != "1" ] && [ -f "$WATCHER_PID_FILE" ]; then
+    WATCHER_PID=$(cat "$WATCHER_PID_FILE" 2>/dev/null || echo "")
+    if [ -n "$WATCHER_PID" ] && kill -0 "$WATCHER_PID" 2>/dev/null; then
+      # Watcher still alive — this is NOT a real session end (likely compaction).
+      # Do nothing — session is still active.
+      exit 0
+    fi
+  fi
+
+  # Full cleanup — session is truly ending
   # Notify peers in the same project
   for PEER_MANIFEST in "$BRIDGE_DIR/projects/$PROJECT_ID/sessions"/*/manifest.json; do
     [ -f "$PEER_MANIFEST" ] || continue

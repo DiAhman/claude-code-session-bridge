@@ -24,20 +24,40 @@ else
   TIMEOUT="${1:-0}"
 fi
 
-# Resolve inbox: project-scoped first, legacy fallback
+# Resolve inbox and session dir: project-scoped first, legacy fallback
 INBOX=""
+SESSION_DIR=""
 for PROJ_MANIFEST in "$BRIDGE_DIR"/projects/*/sessions/"$SESSION_ID"/manifest.json; do
   [ -f "$PROJ_MANIFEST" ] || continue
   PROJ_ID=$(jq -r '.projectId' "$PROJ_MANIFEST")
   INBOX="$BRIDGE_DIR/projects/$PROJ_ID/sessions/$SESSION_ID/inbox"
+  SESSION_DIR="$BRIDGE_DIR/projects/$PROJ_ID/sessions/$SESSION_ID"
   break
 done
-[ -z "$INBOX" ] && INBOX="$BRIDGE_DIR/sessions/$SESSION_ID/inbox"
+if [ -z "$INBOX" ]; then
+  INBOX="$BRIDGE_DIR/sessions/$SESSION_ID/inbox"
+  SESSION_DIR="$BRIDGE_DIR/sessions/$SESSION_ID"
+fi
 
 if [ ! -d "$INBOX" ]; then
   echo "Error: Session $SESSION_ID inbox not found." >&2
   exit 1
 fi
+
+# --- Kill previous bridge-listen.sh instance (prevents process leak) ---
+PID_FILE="$SESSION_DIR/bridge-listen.pid"
+if [ -f "$PID_FILE" ]; then
+  OLD_PID=$(cat "$PID_FILE" 2>/dev/null || echo "")
+  if [ -n "$OLD_PID" ] && [ "$OLD_PID" != "$$" ]; then
+    # Kill the old listener and its child processes (inotifywait/fswatch)
+    pkill -P "$OLD_PID" 2>/dev/null || true
+    kill "$OLD_PID" 2>/dev/null || true
+  fi
+fi
+echo $$ > "$PID_FILE"
+
+# Clean up PID file on exit
+trap 'rm -f "$PID_FILE" 2>/dev/null; exit' EXIT INT TERM
 
 # Detect filesystem watcher
 if command -v inotifywait >/dev/null 2>&1; then
