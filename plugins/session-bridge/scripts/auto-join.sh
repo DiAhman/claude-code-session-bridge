@@ -27,14 +27,17 @@ BRIDGE_DIR="${BRIDGE_DIR:-$HOME/.claude/session-bridge}"
 
 # Verify project still exists
 if [ ! -d "$BRIDGE_DIR/projects/$PROJECT_NAME" ]; then
-  echo '{"continue": true}'
+  ERRMSG="=== BRIDGE AUTO-JOIN FAILED ===\nProject '${PROJECT_NAME}' no longer exists.\nRun: /bridge project create ${PROJECT_NAME}\n=== END BRIDGE ==="
+  jq -n --arg msg "$ERRMSG" '{continue: true, suppressOutput: false, systemMessage: $msg}'
   exit 0
 fi
 
 # Rejoin — project-join.sh reads role/specialty/name from bridge-role automatically
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-SESSION_ID=$(BRIDGE_DIR="$BRIDGE_DIR" PROJECT_DIR="$PROJECT_DIR" bash "$SCRIPT_DIR/project-join.sh" "$PROJECT_NAME" 2>/dev/null) || {
-  echo '{"continue": true}'
+JOIN_ERR=""
+SESSION_ID=$(BRIDGE_DIR="$BRIDGE_DIR" PROJECT_DIR="$PROJECT_DIR" bash "$SCRIPT_DIR/project-join.sh" "$PROJECT_NAME" 2>&1) || {
+  ERRMSG="=== BRIDGE AUTO-JOIN FAILED ===\nCould not rejoin project '${PROJECT_NAME}'.\nRun: /bridge project join ${PROJECT_NAME}\n=== END BRIDGE ==="
+  jq -n --arg msg "$ERRMSG" '{continue: true, suppressOutput: false, systemMessage: $msg}'
   exit 0
 }
 

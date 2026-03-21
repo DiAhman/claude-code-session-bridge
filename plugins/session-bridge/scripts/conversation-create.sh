@@ -58,7 +58,8 @@ jq -n \
     createdAt: $now,
     resolvedAt: null,
     resolution: null
-  }' > "$TMP"
-mv "$TMP" "$CONV_DIR/$CONV_ID.json"
+  }' > "$TMP" \
+  && mv "$TMP" "$CONV_DIR/$CONV_ID.json" \
+  || { rm -f "$TMP"; exit 1; }
 
 echo -n "$CONV_ID"

@@ -58,14 +58,20 @@ if [ -z "$MY_INBOX" ] || [ ! -d "$MY_INBOX" ]; then
 fi
 
 # --- 4. Rate limiting (only with --rate-limited flag) ---
-if [ "$RATE_LIMITED" = true ]; then
-  LAST_CHECK_FILE="$BRIDGE_DIR/.last_inbox_check"
+if [ "$RATE_LIMITED" = true ] && [ -n "$MY_SESSION_ID" ]; then
+  # Per-session rate limit file (not global — prevents cross-session throttling)
+  LAST_CHECK_FILE="$BRIDGE_DIR/.last_inbox_check_${MY_SESSION_ID}"
   NOW_EPOCH=$(date +%s)
   LAST=$(cat "$LAST_CHECK_FILE" 2>/dev/null || echo 0)
   if [ $((NOW_EPOCH - LAST)) -lt 5 ]; then
     # Check for critical urgency messages (fast grep, no jq)
     # Handle both compact ("urgency":"critical") and pretty-printed ("urgency": "critical") JSON
-    HAS_CRITICAL=$(grep -rl '"urgency":[[:space:]]*"critical"' "$MY_INBOX"/*.json 2>/dev/null | head -1 || true)
+    if [ -d "$MY_INBOX" ]; then
+      HAS_CRITICAL=$(find "$MY_INBOX" -name "*.json" -newer "$LAST_CHECK_FILE" \
+        -exec grep -l '"urgency":[[:space:]]*"critical"' {} \; 2>/dev/null | head -1 || true)
+    else
+      HAS_CRITICAL=""
+    fi
     if [ -z "$HAS_CRITICAL" ]; then
       echo '{"continue": true}'
       exit 0
@@ -150,15 +156,20 @@ if [ -n "$MY_PROJECT_ID" ]; then
       STATUS=$(jq -r '.status' "$MSG_FILE" 2>/dev/null) || continue
       [ "$STATUS" = "pending" ] || continue
 
-      MSG_ID=$(jq -r '.id' "$MSG_FILE")
-      FROM_ID=$(jq -r '.from' "$MSG_FILE")
-      TO_ID=$(jq -r '.to' "$MSG_FILE")
-      MSG_TYPE=$(jq -r '.type' "$MSG_FILE")
-      CONTENT=$(jq -r '.content' "$MSG_FILE")
-      FROM_PROJECT=$(jq -r '.metadata.fromProject // "unknown"' "$MSG_FILE")
-      IN_REPLY_TO=$(jq -r '.inReplyTo // ""' "$MSG_FILE")
-      CONV_ID=$(jq -r '.conversationId // ""' "$MSG_FILE")
-      MSG_URGENCY=$(jq -r '.metadata.urgency // "normal"' "$MSG_FILE")
+      # Claim the message atomically — rename prevents double delivery from concurrent hooks
+      MSG_BASENAME=$(basename "$MSG_FILE")
+      CLAIMED_FILE="$INBOX/.claimed_${MSG_BASENAME}"
+      mv "$MSG_FILE" "$CLAIMED_FILE" 2>/dev/null || continue  # Another process got it
+
+      MSG_ID=$(jq -r '.id' "$CLAIMED_FILE")
+      FROM_ID=$(jq -r '.from' "$CLAIMED_FILE")
+      TO_ID=$(jq -r '.to' "$CLAIMED_FILE")
+      MSG_TYPE=$(jq -r '.type' "$CLAIMED_FILE")
+      CONTENT=$(jq -r '.content' "$CLAIMED_FILE")
+      FROM_PROJECT=$(jq -r '.metadata.fromProject // "unknown"' "$CLAIMED_FILE")
+      IN_REPLY_TO=$(jq -r '.inReplyTo // ""' "$CLAIMED_FILE")
+      CONV_ID=$(jq -r '.conversationId // ""' "$CLAIMED_FILE")
+      MSG_URGENCY=$(jq -r '.metadata.urgency // "normal"' "$CLAIMED_FILE")
 
       TO_NAME="$SESSION_NAME"
 
@@ -178,10 +189,13 @@ if [ -n "$MY_PROJECT_ID" ]; then
       ALL_MESSAGES="${ALL_MESSAGES}\nTo respond: BRIDGE_SESSION_ID=${TO_ID} bash \"\${CLAUDE_PLUGIN_ROOT}/scripts/send-message.sh\" ${FROM_ID} response \"Your answer\" --reply-to ${MSG_ID} --conversation ${CONV_ID}"
       ALL_MESSAGES="${ALL_MESSAGES}\n"
 
-      # Mark as read
+      # Mark as read and restore to original filename
       TMP=$(mktemp "$INBOX/${MSG_ID}.XXXXXX")
-      jq '.status = "read"' "$MSG_FILE" > "$TMP"
-      mv "$TMP" "$MSG_FILE"
+      jq '.status = "read"' "$CLAIMED_FILE" > "$TMP" && mv "$TMP" "$MSG_FILE" && rm -f "$CLAIMED_FILE" || {
+        # On failure, restore the original file so the message isn't lost
+        mv "$CLAIMED_FILE" "$MSG_FILE" 2>/dev/null || true
+        rm -f "$TMP" 2>/dev/null || true
+      }
 
       TOTAL_COUNT=$((TOTAL_COUNT + 1))
     done
@@ -208,15 +222,21 @@ else
       MSG_ID=$(jq -r '.id' "$MSG_FILE")
       FROM_ID=$(jq -r '.from' "$MSG_FILE")
       TO_ID=$(jq -r '.to' "$MSG_FILE")
-      MSG_TYPE=$(jq -r '.type' "$MSG_FILE")
-      CONTENT=$(jq -r '.content' "$MSG_FILE")
-      FROM_PROJECT=$(jq -r '.metadata.fromProject // "unknown"' "$MSG_FILE")
-      IN_REPLY_TO=$(jq -r '.inReplyTo // ""' "$MSG_FILE")
 
       # Skip messages not addressed to this session
       if [ "$TO_ID" != "$SESSION_ID" ]; then
         continue
       fi
+
+      # Claim atomically
+      MSG_BASENAME=$(basename "$MSG_FILE")
+      CLAIMED_FILE="$INBOX/.claimed_${MSG_BASENAME}"
+      mv "$MSG_FILE" "$CLAIMED_FILE" 2>/dev/null || continue
+
+      MSG_TYPE=$(jq -r '.type' "$CLAIMED_FILE")
+      CONTENT=$(jq -r '.content' "$CLAIMED_FILE")
+      FROM_PROJECT=$(jq -r '.metadata.fromProject // "unknown"' "$CLAIMED_FILE")
+      IN_REPLY_TO=$(jq -r '.inReplyTo // ""' "$CLAIMED_FILE")
 
       TO_NAME="$SESSION_NAME"
 
@@ -230,10 +250,12 @@ else
       ALL_MESSAGES="${ALL_MESSAGES}\nTo respond: BRIDGE_SESSION_ID=${TO_ID} bash \"\${CLAUDE_PLUGIN_ROOT}/scripts/send-message.sh\" ${FROM_ID} response \"Your answer\" ${MSG_ID}"
       ALL_MESSAGES="${ALL_MESSAGES}\n"
 
-      # Mark as read
+      # Mark as read and restore
       TMP=$(mktemp "$INBOX/${MSG_ID}.XXXXXX")
-      jq '.status = "read"' "$MSG_FILE" > "$TMP"
-      mv "$TMP" "$MSG_FILE"
+      jq '.status = "read"' "$CLAIMED_FILE" > "$TMP" && mv "$TMP" "$MSG_FILE" && rm -f "$CLAIMED_FILE" || {
+        mv "$CLAIMED_FILE" "$MSG_FILE" 2>/dev/null || true
+        rm -f "$TMP" 2>/dev/null || true
+      }
 
       TOTAL_COUNT=$((TOTAL_COUNT + 1))
     done

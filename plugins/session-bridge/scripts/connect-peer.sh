@@ -7,7 +7,14 @@ BRIDGE_DIR="${BRIDGE_DIR:-$HOME/.claude/session-bridge}"
 SENDER_ID="${BRIDGE_SESSION_ID:?BRIDGE_SESSION_ID must be set}"
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 
-TARGET_MANIFEST="$BRIDGE_DIR/sessions/$TARGET_ID/manifest.json"
+# Resolve target manifest: project-scoped first, then legacy
+TARGET_MANIFEST=""
+for PM in "$BRIDGE_DIR"/projects/*/sessions/"$TARGET_ID"/manifest.json; do
+  [ -f "$PM" ] || continue
+  TARGET_MANIFEST="$PM"
+  break
+done
+[ -z "$TARGET_MANIFEST" ] && TARGET_MANIFEST="$BRIDGE_DIR/sessions/$TARGET_ID/manifest.json"
 
 if [ ! -f "$TARGET_MANIFEST" ]; then
   echo "Error: Session $TARGET_ID not found." >&2

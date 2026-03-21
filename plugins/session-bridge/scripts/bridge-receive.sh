@@ -38,10 +38,11 @@ while [ "$ELAPSED" -lt "$TIMEOUT" ]; do
     FROM_PROJECT=$(jq -r '.metadata.fromProject // "unknown"' "$MSG_FILE")
     MSG_TYPE=$(jq -r '.type' "$MSG_FILE")
 
-    # Mark as read
+    # Mark as read (with temp cleanup on failure)
     TMP=$(mktemp "$INBOX/$(basename "$MSG_FILE" .json).XXXXXX")
-    jq '.status = "read"' "$MSG_FILE" > "$TMP"
-    mv "$TMP" "$MSG_FILE"
+    jq '.status = "read"' "$MSG_FILE" > "$TMP" \
+      && mv "$TMP" "$MSG_FILE" \
+      || rm -f "$TMP"
 
     echo "Response from $FROM_PROJECT:"
     echo "$CONTENT"

@@ -43,4 +43,4 @@ else
   jq --arg s "$NEW_STATUS" '.status = $s' "$CONV_FILE" > "$TMP"
 fi
 
-mv "$TMP" "$CONV_FILE"
+mv "$TMP" "$CONV_FILE" || { rm -f "$TMP"; exit 1; }

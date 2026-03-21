@@ -163,7 +163,7 @@ OUTPUT=$(BRIDGE_DIR="$V2_BRIDGE" BRIDGE_SESSION_ID="$V2_SID" PROJECT_DIR="$V2_PR
 assert_contains "first rate-limited call succeeds" '"continue": true' "$OUTPUT"
 
 # Verify timestamp file was created
-if [ -f "$V2_BRIDGE/.last_inbox_check" ]; then
+if ls "$V2_BRIDGE/.last_inbox_check_"* >/dev/null 2>&1; then
   echo "  PASS: timestamp file created"; PASS=$((PASS + 1))
 else
   echo "  FAIL: timestamp file not created"; FAIL=$((FAIL + 1))
@@ -268,7 +268,7 @@ kill_watchers "$V2_BRIDGE"
 
 # Set timestamp to simulate recent check
 mkdir -p "$V2_BRIDGE"
-date +%s > "$V2_BRIDGE/.last_inbox_check"
+date +%s > "$V2_BRIDGE/.last_inbox_check_${V2_SID_B}"
 
 # Send a message from A to B
 BRIDGE_DIR="$V2_BRIDGE" BRIDGE_SESSION_ID="$V2_SID_A" bash "$SEND_MSG" "$V2_SID_B" "query" "No rate limit test" > /dev/null

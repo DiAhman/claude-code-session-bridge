@@ -74,7 +74,7 @@ if [ -z "$PROJECT_FILTER" ] && [ -d "$SESSIONS_DIR" ]; then
     fi
     LEGACY_OUTPUT="$LEGACY_OUTPUT"$'\n'$(printf "%-10s %-20s %-8s %s\n" "$SID" "$PNAME" "$STATUS" "$PPATH")
     LEGACY_FOUND=$((LEGACY_FOUND + 1))
-    FOUND=$((FOUND + LEGACY_FOUND))
+    FOUND=$((FOUND + 1))
   done
 
   if [ "$LEGACY_FOUND" -gt 0 ]; then

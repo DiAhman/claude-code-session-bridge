@@ -12,6 +12,14 @@ MSG_TYPE="$2"
 CONTENT="$3"
 shift 3
 
+# Validate message type
+VALID_TYPES=" ping query response task-assign task-update task-complete task-cancel escalate task-redirect human-input-needed human-response routing-query session-ended "
+if [[ "$VALID_TYPES" != *" $MSG_TYPE "* ]]; then
+  echo "Error: Unknown message type '$MSG_TYPE'." >&2
+  echo "Valid types: ping query response task-assign task-update task-complete task-cancel escalate task-redirect human-input-needed human-response routing-query session-ended" >&2
+  exit 1
+fi
+
 # Parse remaining args: legacy positional in-reply-to + named flags
 IN_REPLY_TO="null"
 CONVERSATION_ID=""
@@ -81,9 +89,14 @@ elif [ -n "$SENDER_PROJECT_ID" ]; then
       TOPIC="$CONTENT"
       [ ${#TOPIC} -gt 80 ] && TOPIC="${TOPIC:0:80}..."
       CONVERSATION_ID=$(BRIDGE_DIR="$BRIDGE_DIR" bash "$SCRIPT_DIR/conversation-create.sh" \
-        "$SENDER_PROJECT_ID" "$SENDER_ID" "$TARGET_ID" "$TOPIC")
+        "$SENDER_PROJECT_ID" "$SENDER_ID" "$TARGET_ID" "$TOPIC") || {
+        echo "Error: Failed to create conversation for $MSG_TYPE message to $TARGET_ID" >&2
+        exit 1
+      }
       BRIDGE_DIR="$BRIDGE_DIR" bash "$SCRIPT_DIR/conversation-update.sh" \
-        "$SENDER_PROJECT_ID" "$CONVERSATION_ID" "waiting"
+        "$SENDER_PROJECT_ID" "$CONVERSATION_ID" "waiting" || {
+        echo "Warning: Conversation $CONVERSATION_ID created but could not set status to waiting" >&2
+      }
     else
       echo "Error: Message type '$MSG_TYPE' requires --conversation for project-scoped sessions" >&2
       exit 1
@@ -92,9 +105,11 @@ elif [ -n "$SENDER_PROJECT_ID" ]; then
   # Auto-resolve on task-complete/task-cancel
   if [ "$MSG_TYPE" = "task-complete" ] || [ "$MSG_TYPE" = "task-cancel" ]; then
     if [ "$CONVERSATION_ID" != "null" ]; then
-      BRIDGE_DIR="$BRIDGE_DIR" bash "$SCRIPT_DIR/conversation-update.sh" \
+      if ! BRIDGE_DIR="$BRIDGE_DIR" bash "$SCRIPT_DIR/conversation-update.sh" \
         "$SENDER_PROJECT_ID" "$CONVERSATION_ID" "resolved" \
-        --resolution "$(echo "$CONTENT" | head -c 200)" 2>/dev/null || true
+        --resolution "$(echo "$CONTENT" | head -c 200)" 2>&1; then
+        echo "Warning: Message sent but conversation $CONVERSATION_ID could not be resolved" >&2
+      fi
     fi
   fi
 else

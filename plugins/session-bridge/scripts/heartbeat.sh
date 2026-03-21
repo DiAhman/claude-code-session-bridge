@@ -13,10 +13,18 @@ else
   exit 0
 fi
 
-MANIFEST="$BRIDGE_DIR/sessions/$SESSION_ID/manifest.json"
+# Resolve manifest path: project-scoped first, then legacy
+MANIFEST=""
+for PM in "$BRIDGE_DIR"/projects/*/sessions/"$SESSION_ID"/manifest.json; do
+  [ -f "$PM" ] || continue
+  MANIFEST="$PM"
+  break
+done
+[ -z "$MANIFEST" ] && MANIFEST="$BRIDGE_DIR/sessions/$SESSION_ID/manifest.json"
 [ -f "$MANIFEST" ] || exit 0
 
 NOW=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
-TMP=$(mktemp "$BRIDGE_DIR/sessions/$SESSION_ID/manifest.XXXXXX")
-jq --arg hb "$NOW" '.lastHeartbeat = $hb' "$MANIFEST" > "$TMP"
-mv "$TMP" "$MANIFEST"
+TMP=$(mktemp "$(dirname "$MANIFEST")/manifest.XXXXXX")
+jq --arg hb "$NOW" '.lastHeartbeat = $hb' "$MANIFEST" > "$TMP" \
+  && mv "$TMP" "$MANIFEST" \
+  || { rm -f "$TMP"; exit 1; }

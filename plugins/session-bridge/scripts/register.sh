@@ -21,8 +21,9 @@ if [ -f "$BRIDGE_SESSION_FILE" ]; then
     # Update heartbeat and reuse
     NOW=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
     TMP=$(mktemp "$EXISTING_DIR/manifest.XXXXXX")
-    jq --arg hb "$NOW" '.lastHeartbeat = $hb' "$EXISTING_DIR/manifest.json" > "$TMP"
-    mv "$TMP" "$EXISTING_DIR/manifest.json"
+    jq --arg hb "$NOW" '.lastHeartbeat = $hb' "$EXISTING_DIR/manifest.json" > "$TMP" \
+      && mv "$TMP" "$EXISTING_DIR/manifest.json" \
+      || { rm -f "$TMP"; exit 1; }
     echo -n "$EXISTING_ID"
     exit 0
   fi
@@ -47,10 +48,12 @@ cat > "$MANIFEST_TMP" <<MANIFEST
   "capabilities": ["query", "context-dump", "conversation"]
 }
 MANIFEST
-mv "$MANIFEST_TMP" "$SESSION_DIR/manifest.json"
+mv "$MANIFEST_TMP" "$SESSION_DIR/manifest.json" || { rm -f "$MANIFEST_TMP"; exit 1; }
 
 mkdir -p "$PROJECT_DIR/.claude"
-echo -n "$SESSION_ID" > "$BRIDGE_SESSION_FILE"
+BS_TMP=$(mktemp "$PROJECT_DIR/.claude/bridge-session.XXXXXX")
+echo -n "$SESSION_ID" > "$BS_TMP"
+mv "$BS_TMP" "$BRIDGE_SESSION_FILE"
 
 if [ -n "${CLAUDE_ENV_FILE:-}" ]; then
   echo "BRIDGE_SESSION_ID=$SESSION_ID" >> "$CLAUDE_ENV_FILE"

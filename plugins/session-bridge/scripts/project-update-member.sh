@@ -54,7 +54,8 @@ if [ -n "$NAME" ]; then
 fi
 
 TMP=$(mktemp "$(dirname "$MANIFEST")/manifest.XXXXXX")
-jq "${JQ_ARGS[@]}" "$JQ_FILTER" "$MANIFEST" > "$TMP"
-mv "$TMP" "$MANIFEST"
+jq "${JQ_ARGS[@]}" "$JQ_FILTER" "$MANIFEST" > "$TMP" \
+  && mv "$TMP" "$MANIFEST" \
+  || { rm -f "$TMP"; exit 1; }
 
 echo "Updated session $TARGET_SESSION in project $PROJECT_NAME"

@@ -69,12 +69,39 @@ if [ -f "$BRIDGE_SESSION_FILE" ]; then
       TMP=$(mktemp "$EXISTING_DIR/manifest.XXXXXX")
       jq --arg hb "$NOW" --arg role "$ROLE" --arg spec "$SPECIALTY" --arg pname "$SESSION_NAME" \
         '.lastHeartbeat = $hb | .role = $role | .specialty = $spec | .projectName = $pname' \
-        "$EXISTING_DIR/manifest.json" > "$TMP"
-      mv "$TMP" "$EXISTING_DIR/manifest.json"
-      # Persist role for future joins
+        "$EXISTING_DIR/manifest.json" > "$TMP" \
+        && mv "$TMP" "$EXISTING_DIR/manifest.json" \
+        || { rm -f "$TMP"; exit 1; }
+      # Persist role for future joins (atomic write)
       mkdir -p "$PROJECT_DIR/.claude"
+      ROLE_TMP=$(mktemp "$PROJECT_DIR/.claude/bridge-role.XXXXXX")
       jq -n --arg role "$ROLE" --arg spec "$SPECIALTY" --arg name "$SESSION_NAME" --arg project "$PROJECT_NAME" \
-        '{role: $role, specialty: $spec, name: $name, project: $project}' > "$BRIDGE_ROLE_FILE"
+        '{role: $role, specialty: $spec, name: $name, project: $project}' > "$ROLE_TMP"
+      mv "$ROLE_TMP" "$BRIDGE_ROLE_FILE"
+      # Ensure watcher is alive — relaunch if dead (prevents false cleanup triggers)
+      SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+      WATCHER_SCRIPT="$SCRIPT_DIR/inbox-watcher.sh"
+      WATCHER_PID_FILE="$EXISTING_DIR/watcher.pid"
+      if [ -f "$WATCHER_SCRIPT" ]; then
+        NEED_WATCHER=false
+        if [ ! -f "$WATCHER_PID_FILE" ]; then
+          NEED_WATCHER=true
+        else
+          OLD_WPID=$(cat "$WATCHER_PID_FILE" 2>/dev/null || echo "")
+          if [ -z "$OLD_WPID" ] || ! kill -0 "$OLD_WPID" 2>/dev/null; then
+            NEED_WATCHER=true
+          fi
+        fi
+        if [ "$NEED_WATCHER" = true ]; then
+          BRIDGE_DIR="$BRIDGE_DIR" bash "$WATCHER_SCRIPT" "$EXISTING_ID" "$PROJECT_NAME" >/dev/null 2>&1 &
+          WATCHER_PID=$!
+          sleep 0.1
+          if kill -0 "$WATCHER_PID" 2>/dev/null; then
+            echo "$WATCHER_PID" > "$WATCHER_PID_FILE"
+            disown "$WATCHER_PID"
+          fi
+        fi
+      fi
       echo -n "$EXISTING_ID"
       exit 0
     fi
@@ -106,27 +133,39 @@ jq -n \
     startedAt: $now,
     lastHeartbeat: $now,
     status: "active"
-  }' > "$TMP"
-mv "$TMP" "$SESSION_DIR/manifest.json"
+  }' > "$TMP" \
+  && mv "$TMP" "$SESSION_DIR/manifest.json" \
+  || { rm -f "$TMP"; exit 1; }
 
-# Write bridge-session pointer and persist role
+# Write bridge-session pointer (atomic) and persist role
 mkdir -p "$PROJECT_DIR/.claude"
-echo -n "$SESSION_ID" > "$BRIDGE_SESSION_FILE"
+BS_TMP=$(mktemp "$PROJECT_DIR/.claude/bridge-session.XXXXXX")
+echo -n "$SESSION_ID" > "$BS_TMP"
+mv "$BS_TMP" "$BRIDGE_SESSION_FILE"
+ROLE_TMP2=$(mktemp "$PROJECT_DIR/.claude/bridge-role.XXXXXX")
 jq -n --arg role "$ROLE" --arg spec "$SPECIALTY" --arg name "$SESSION_NAME" --arg project "$PROJECT_NAME" \
-  '{role: $role, specialty: $spec, name: $name, project: $project}' > "$BRIDGE_ROLE_FILE"
+  '{role: $role, specialty: $spec, name: $name, project: $project}' > "$ROLE_TMP2" \
+  && mv "$ROLE_TMP2" "$BRIDGE_ROLE_FILE" \
+  || rm -f "$ROLE_TMP2"
 
 # Set BRIDGE_SESSION_ID in env file if available
 if [ -n "${CLAUDE_ENV_FILE:-}" ]; then
   echo "BRIDGE_SESSION_ID=$SESSION_ID" >> "$CLAUDE_ENV_FILE"
 fi
 
-# Start inbox watcher in background
+# Start inbox watcher in background — verify it actually started
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 WATCHER_SCRIPT="$SCRIPT_DIR/inbox-watcher.sh"
 if [ -f "$WATCHER_SCRIPT" ]; then
   BRIDGE_DIR="$BRIDGE_DIR" bash "$WATCHER_SCRIPT" "$SESSION_ID" "$PROJECT_NAME" >/dev/null 2>&1 &
-  echo $! > "$SESSION_DIR/watcher.pid"
-  disown
+  WATCHER_PID=$!
+  sleep 0.1
+  if kill -0 "$WATCHER_PID" 2>/dev/null; then
+    echo "$WATCHER_PID" > "$SESSION_DIR/watcher.pid"
+    disown "$WATCHER_PID"
+  else
+    echo "Warning: Inbox watcher failed to start" >&2
+  fi
 fi
 
 echo -n "$SESSION_ID"

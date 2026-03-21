@@ -112,6 +112,15 @@ if [ -n "$PROJECT_ID" ]; then
     fi
   done
 
+  # Warn about unread messages before deletion
+  if [ -d "$SESSION_DIR/inbox" ]; then
+    PENDING_COUNT=$(grep -rl '"status":[[:space:]]*"pending"' "$SESSION_DIR/inbox/"*.json 2>/dev/null | wc -l | tr -d '[:space:]') || true
+    PENDING_COUNT="${PENDING_COUNT:-0}"
+    if [ "$PENDING_COUNT" -gt 0 ]; then
+      echo "Warning: Destroying session $SESSION_ID with $PENDING_COUNT unread message(s)" >&2
+    fi
+  fi
+
   # Remove session directory (do NOT delete conversation files — shared project state)
   rm -rf "$SESSION_DIR"
 else
@@ -152,14 +161,31 @@ fi
 # Remove bridge-session pointer
 rm -f "$BRIDGE_SESSION_FILE"
 
-# Clean up stale sessions (heartbeat older than 30 minutes) — legacy only
+# Helper: validate ISO 8601 timestamp format (YYYY-MM-DDTHH:MM:SSZ)
+is_valid_timestamp() {
+  echo "$1" | grep -qE '^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$'
+}
+
+# Clean up stale sessions (heartbeat older than 30 minutes)
 STALE_CUTOFF=$(date -u -v-30M +"%Y-%m-%dT%H:%M:%SZ" 2>/dev/null || date -u -d "30 minutes ago" +"%Y-%m-%dT%H:%M:%SZ" 2>/dev/null || echo "")
-if [ -n "$STALE_CUTOFF" ]; then
+if [ -n "$STALE_CUTOFF" ] && is_valid_timestamp "$STALE_CUTOFF"; then
+  # Legacy sessions
   for STALE_MANIFEST in "$BRIDGE_DIR"/sessions/*/manifest.json; do
     [ -f "$STALE_MANIFEST" ] || continue
     STALE_DIR=$(dirname "$STALE_MANIFEST")
     STALE_HB=$(jq -r '.lastHeartbeat // ""' "$STALE_MANIFEST" 2>/dev/null || echo "")
-    if [ -n "$STALE_HB" ] && [[ "$STALE_HB" < "$STALE_CUTOFF" ]]; then
+    # Only compare if heartbeat is a valid timestamp (prevents "null" < "2026-..." deletion)
+    if is_valid_timestamp "$STALE_HB" && [[ "$STALE_HB" < "$STALE_CUTOFF" ]]; then
+      rm -rf "$STALE_DIR"
+    fi
+  done
+
+  # Project-scoped sessions
+  for STALE_MANIFEST in "$BRIDGE_DIR"/projects/*/sessions/*/manifest.json; do
+    [ -f "$STALE_MANIFEST" ] || continue
+    STALE_DIR=$(dirname "$STALE_MANIFEST")
+    STALE_HB=$(jq -r '.lastHeartbeat // ""' "$STALE_MANIFEST" 2>/dev/null || echo "")
+    if is_valid_timestamp "$STALE_HB" && [[ "$STALE_HB" < "$STALE_CUTOFF" ]]; then
       rm -rf "$STALE_DIR"
     fi
   done

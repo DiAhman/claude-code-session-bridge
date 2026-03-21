@@ -30,7 +30,8 @@ jq -n \
     createdAt: $now,
     createdBy: null,
     topology: {}
-  }' > "$TMP"
-mv "$TMP" "$PROJECT_DIR/project.json"
+  }' > "$TMP" \
+  && mv "$TMP" "$PROJECT_DIR/project.json" \
+  || { rm -f "$TMP"; exit 1; }
 
 echo -n "$PROJECT_NAME"

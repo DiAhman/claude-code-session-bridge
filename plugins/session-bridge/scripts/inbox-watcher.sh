@@ -21,15 +21,16 @@ fi
 # Heartbeat update function
 update_heartbeat() {
   [ -f "$MANIFEST" ] || return
-  local NOW
+  local NOW TMP
   NOW=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
-  local TMP
   TMP=$(mktemp "$(dirname "$MANIFEST")/manifest.XXXXXX")
   jq --arg hb "$NOW" '.lastHeartbeat = $hb' "$MANIFEST" > "$TMP" 2>/dev/null && mv "$TMP" "$MANIFEST" || rm -f "$TMP"
 }
 
 LAST_HEARTBEAT=$(date +%s)
 HEARTBEAT_INTERVAL=60
+WATCHER_FAIL_COUNT=0
+MAX_WATCHER_FAILURES=5
 
 # Detect watcher tool
 if command -v inotifywait >/dev/null 2>&1; then
@@ -40,11 +41,18 @@ else
   WATCHER="poll"
 fi
 
-# Graceful shutdown
+# Graceful shutdown — use background inotifywait + wait so SIGTERM can interrupt
 RUNNING=true
-trap 'RUNNING=false' TERM INT
+CHILD_PID=""
+trap 'RUNNING=false; [ -n "$CHILD_PID" ] && kill "$CHILD_PID" 2>/dev/null || true' TERM INT
 
 while $RUNNING; do
+  # Check inbox still exists (prevents hot spin if directory deleted)
+  if [ ! -d "$INBOX" ]; then
+    echo "Error: Inbox directory $INBOX no longer exists. Stopping watcher." >&2
+    exit 1
+  fi
+
   # Heartbeat check
   NOW_EPOCH=$(date +%s)
   if [ $((NOW_EPOCH - LAST_HEARTBEAT)) -ge $HEARTBEAT_INTERVAL ]; then
@@ -54,15 +62,37 @@ while $RUNNING; do
 
   case "$WATCHER" in
     inotifywait)
-      # Block until file created or 30s timeout (then loop back for heartbeat check)
-      inotifywait -t 30 -e create "$INBOX" >/dev/null 2>&1 || true
+      # Run in background so SIGTERM trap can kill it
+      inotifywait -t 30 -e create "$INBOX" >/dev/null 2>&1 &
+      CHILD_PID=$!
+      wait "$CHILD_PID" 2>/dev/null
+      WATCH_RC=$?
+      CHILD_PID=""
+      case "$WATCH_RC" in
+        0) WATCHER_FAIL_COUNT=0 ;;  # Event detected
+        2) ;;  # Timeout — normal
+        *)
+          # Error — back off to prevent hot spin
+          WATCHER_FAIL_COUNT=$((WATCHER_FAIL_COUNT + 1))
+          if [ "$WATCHER_FAIL_COUNT" -ge "$MAX_WATCHER_FAILURES" ]; then
+            echo "Error: inotifywait failed $WATCHER_FAIL_COUNT consecutive times. Stopping watcher." >&2
+            exit 1
+          fi
+          sleep 2
+          ;;
+      esac
       ;;
     fswatch)
-      timeout 30 fswatch --one-event "$INBOX" >/dev/null 2>&1 || true
+      timeout 30 fswatch --one-event "$INBOX" >/dev/null 2>&1 &
+      CHILD_PID=$!
+      wait "$CHILD_PID" 2>/dev/null || true
+      CHILD_PID=""
       ;;
     poll)
       sleep 10 &
-      wait $! 2>/dev/null || true
+      CHILD_PID=$!
+      wait "$CHILD_PID" 2>/dev/null || true
+      CHILD_PID=""
       ;;
   esac
 
