@@ -38,7 +38,8 @@ assert_eq "watcher still running" "true" "$(kill -0 $WATCHER_PID 2>/dev/null && 
 
 # Test 3: Clean shutdown
 kill $WATCHER_PID 2>/dev/null || true
-wait $WATCHER_PID 2>/dev/null || true
+pkill -P $WATCHER_PID 2>/dev/null || true
+sleep 1
 assert_eq "watcher stopped" "false" "$(kill -0 $WATCHER_PID 2>/dev/null && echo true || echo false)"
 
 print_results

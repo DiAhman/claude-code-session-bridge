@@ -60,12 +60,7 @@ if [ -z "$SESSION_DIR" ]; then
   SESSION_DIR="$BRIDGE_DIR/sessions/$SESSION_ID"
 fi
 
-# Kill inbox watcher if running
 WATCHER_PID_FILE="$SESSION_DIR/watcher.pid"
-if [ -f "$WATCHER_PID_FILE" ]; then
-  kill "$(cat "$WATCHER_PID_FILE")" 2>/dev/null || true
-  rm -f "$WATCHER_PID_FILE"
-fi
 
 if [ -n "$PROJECT_ID" ]; then
   # --- Project-scoped cleanup ---
@@ -79,6 +74,7 @@ if [ -n "$PROJECT_ID" ]; then
   CONFIRMED="${BRIDGE_CLEANUP_CONFIRMED:-0}"
 
   # Heuristic: if the watcher is still running, this is likely a non-terminal event
+  # IMPORTANT: check BEFORE killing the watcher
   if [ "$CONFIRMED" != "1" ] && [ -f "$WATCHER_PID_FILE" ]; then
     WATCHER_PID=$(cat "$WATCHER_PID_FILE" 2>/dev/null || echo "")
     if [ -n "$WATCHER_PID" ] && kill -0 "$WATCHER_PID" 2>/dev/null; then
@@ -86,6 +82,12 @@ if [ -n "$PROJECT_ID" ]; then
       # Do nothing — session is still active.
       exit 0
     fi
+  fi
+
+  # Past this point, we're doing full cleanup — kill the watcher first
+  if [ -f "$WATCHER_PID_FILE" ]; then
+    kill "$(cat "$WATCHER_PID_FILE")" 2>/dev/null || true
+    rm -f "$WATCHER_PID_FILE"
   fi
 
   # Full cleanup — session is truly ending
@@ -114,6 +116,12 @@ if [ -n "$PROJECT_ID" ]; then
   rm -rf "$SESSION_DIR"
 else
   # --- Legacy cleanup ---
+
+  # Kill inbox watcher if running (legacy sessions may also have one)
+  if [ -f "$WATCHER_PID_FILE" ]; then
+    kill "$(cat "$WATCHER_PID_FILE")" 2>/dev/null || true
+    rm -f "$WATCHER_PID_FILE"
+  fi
 
   # Find connected peers from inbox (senders) and outbox (recipients)
   PEER_IDS=""

@@ -164,7 +164,7 @@ fi
 # --- Test 7: Project session dir removed ---
 echo ""
 echo "Test 7: Project-scoped cleanup removes session directory"
-BRIDGE_DIR="$V2_BRIDGE" PROJECT_DIR="$V2_PROJ_A" bash "$CLEANUP"
+BRIDGE_CLEANUP_CONFIRMED=1 BRIDGE_DIR="$V2_BRIDGE" PROJECT_DIR="$V2_PROJ_A" bash "$CLEANUP"
 assert_eq "project session dir removed" "false" "$([ -d "$V2_BRIDGE/projects/cleanup-proj/sessions/$V2_SID_A" ] && echo true || echo false)"
 
 # --- Test 8: bridge-session pointer removed ---
