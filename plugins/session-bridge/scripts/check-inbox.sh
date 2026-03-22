@@ -151,6 +151,13 @@ if [ -n "$MY_PROJECT_ID" ]; then
       SESSION_NAME=$(jq -r '.projectName // "unknown"' "$MANIFEST")
     fi
 
+    # Recover orphaned .claimed_ files from killed processes
+    for CLAIMED in "$INBOX"/.claimed_*.json; do
+      [ -f "$CLAIMED" ] || continue
+      ORIG_NAME=$(basename "$CLAIMED" | sed 's/^\.claimed_//')
+      mv "$CLAIMED" "$INBOX/$ORIG_NAME" 2>/dev/null || true
+    done
+
     for MSG_FILE in "$INBOX"/*.json; do
       [ -f "$MSG_FILE" ] || continue
       STATUS=$(jq -r '.status' "$MSG_FILE" 2>/dev/null) || continue

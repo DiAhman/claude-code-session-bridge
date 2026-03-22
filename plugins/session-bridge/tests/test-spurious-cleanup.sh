@@ -76,22 +76,25 @@ for F in "$SESSION_DIR_B/inbox"/msg-*.json; do
 done
 assert_eq "session-ended sent on confirmed cleanup" "1" "$ENDED_COUNT"
 
-# Test 3: Cleanup with dead watcher also does full cleanup (truly ended session)
-# Re-create session A
+# Test 3: Unconfirmed cleanup with dead watcher still does NOT do full cleanup
+# (project sessions ALWAYS require BRIDGE_CLEANUP_CONFIRMED=1)
 SID_A2=$(BRIDGE_DIR="$BRIDGE_DIR" PROJECT_DIR="$PROJ_A" bash "$JOIN" "cleanup-test")
 SESSION_DIR_A2="$BRIDGE_DIR/projects/cleanup-test/sessions/$SID_A2"
 
-# Kill the watcher to simulate a truly dead session
+# Kill the watcher to simulate a dead watcher
 if [ -f "$SESSION_DIR_A2/watcher.pid" ]; then
   kill "$(cat "$SESSION_DIR_A2/watcher.pid")" 2>/dev/null || true
   sleep 0.5
 fi
-# Write a fake dead PID
 echo "99999" > "$SESSION_DIR_A2/watcher.pid"
 
-# Unconfirmed cleanup should still work because watcher is dead
+# Unconfirmed cleanup should NOT remove the session (even with dead watcher)
 BRIDGE_DIR="$BRIDGE_DIR" PROJECT_DIR="$PROJ_A" bash "$CLEANUP" 2>/dev/null || true
-assert_eq "session dir removed when watcher dead" "false" "$([ -d "$SESSION_DIR_A2" ] && echo true || echo false)"
+assert_dir_exists "session survives unconfirmed cleanup even with dead watcher" "$SESSION_DIR_A2"
+
+# But confirmed cleanup DOES remove it
+BRIDGE_CLEANUP_CONFIRMED=1 BRIDGE_DIR="$BRIDGE_DIR" PROJECT_DIR="$PROJ_A" bash "$CLEANUP" 2>/dev/null || true
+assert_eq "session removed with confirmed cleanup" "false" "$([ -d "$SESSION_DIR_A2" ] && echo true || echo false)"
 
 # Test 4: Legacy sessions always do full cleanup (no watcher check)
 LEGACY_DIR="$TEST_TMPDIR/legacy-proj"

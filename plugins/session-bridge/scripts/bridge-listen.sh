@@ -46,20 +46,37 @@ fi
 
 # --- Kill previous bridge-listen.sh instance (prevents process leak) ---
 PID_FILE="$SESSION_DIR/bridge-listen.pid"
+WATCHER_CHILD_FILE="$SESSION_DIR/bridge-listen-child.pid"
+
 if [ -f "$PID_FILE" ]; then
   OLD_PID=$(cat "$PID_FILE" 2>/dev/null || echo "")
   if [ -n "$OLD_PID" ] && [ "$OLD_PID" != "$$" ]; then
-    # Kill the old listener and its child processes (inotifywait/fswatch)
+    # Kill the old listener's tracked inotifywait/fswatch child first
+    if [ -f "$WATCHER_CHILD_FILE" ]; then
+      OLD_CHILD=$(cat "$WATCHER_CHILD_FILE" 2>/dev/null || echo "")
+      [ -n "$OLD_CHILD" ] && kill "$OLD_CHILD" 2>/dev/null || true
+    fi
+    # Then kill children by parent (in case child PID file was stale)
     pkill -P "$OLD_PID" 2>/dev/null || true
     kill "$OLD_PID" 2>/dev/null || true
   fi
 fi
+
+# Also kill any orphaned inotifywait/fswatch watching THIS inbox
+# (catches reparented-to-init orphans that pkill -P can't find)
+for ORPHAN_PID in $(pgrep -f "inotifywait.*$INBOX" 2>/dev/null || true); do
+  kill "$ORPHAN_PID" 2>/dev/null || true
+done
+for ORPHAN_PID in $(pgrep -f "fswatch.*$INBOX" 2>/dev/null || true); do
+  kill "$ORPHAN_PID" 2>/dev/null || true
+done
+
 PID_TMP=$(mktemp "$SESSION_DIR/bridge-listen.pid.XXXXXX")
 echo $$ > "$PID_TMP"
 mv "$PID_TMP" "$PID_FILE"
 
-# Clean up PID file on exit
-trap 'rm -f "$PID_FILE" 2>/dev/null; exit' EXIT INT TERM
+# Clean up PID file and child PID file on exit
+trap 'rm -f "$PID_FILE" "$WATCHER_CHILD_FILE" 2>/dev/null; exit' EXIT INT TERM
 
 # Detect filesystem watcher
 if command -v inotifywait >/dev/null 2>&1; then
@@ -78,6 +95,13 @@ while true; do
   if [ "$TIMEOUT" -gt 0 ] && [ "$ELAPSED" -ge "$TIMEOUT" ]; then
     exit 1
   fi
+
+  # Recover any orphaned .claimed_ files (from killed bridge-listen processes)
+  for CLAIMED in "$INBOX"/.claimed_*.json; do
+    [ -f "$CLAIMED" ] || continue
+    ORIG_NAME=$(basename "$CLAIMED" | sed 's/^\.claimed_//')
+    mv "$CLAIMED" "$INBOX/$ORIG_NAME" 2>/dev/null || true
+  done
 
   # Scan only THIS session's inbox
   for MSG_FILE in "$INBOX"/*.json; do
@@ -131,10 +155,14 @@ while true; do
       else
         REMAINING="$INTERVAL"
       fi
-      # Capture exit code — disable set -e for this command since
-      # inotifywait returns 2 on timeout which would kill the script
+      # Run inotifywait in background so we can track its PID for cleanup.
+      # This prevents orphaned inotifywait processes when the parent exits.
+      inotifywait -t "$REMAINING" -e create "$INBOX" >/dev/null 2>&1 &
+      INOTIFY_PID=$!
+      echo "$INOTIFY_PID" > "$WATCHER_CHILD_FILE"
       WATCH_RC=0
-      inotifywait -t "$REMAINING" -e create "$INBOX" >/dev/null 2>&1 || WATCH_RC=$?
+      wait "$INOTIFY_PID" 2>/dev/null || WATCH_RC=$?
+      rm -f "$WATCHER_CHILD_FILE" 2>/dev/null
       case "$WATCH_RC" in
         0)
           # File event detected — re-scan
@@ -164,7 +192,11 @@ while true; do
         REMAINING="$INTERVAL"
       fi
       START_WAIT=$(date +%s)
-      timeout "$REMAINING" fswatch --one-event "$INBOX" >/dev/null 2>&1 || true
+      timeout "$REMAINING" fswatch --one-event "$INBOX" >/dev/null 2>&1 &
+      FSWATCH_PID=$!
+      echo "$FSWATCH_PID" > "$WATCHER_CHILD_FILE"
+      wait "$FSWATCH_PID" 2>/dev/null || true
+      rm -f "$WATCHER_CHILD_FILE" 2>/dev/null
       END_WAIT=$(date +%s)
       ELAPSED=$((ELAPSED + END_WAIT - START_WAIT))
       ;;

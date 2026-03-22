@@ -73,15 +73,16 @@ if [ -n "$PROJECT_ID" ]; then
   # or the session dir no longer has a running watcher (session truly dead).
   CONFIRMED="${BRIDGE_CLEANUP_CONFIRMED:-0}"
 
-  # Heuristic: if the watcher is still running, this is likely a non-terminal event
-  # IMPORTANT: check BEFORE killing the watcher
-  if [ "$CONFIRMED" != "1" ] && [ -f "$WATCHER_PID_FILE" ]; then
-    WATCHER_PID=$(cat "$WATCHER_PID_FILE" 2>/dev/null || echo "")
-    if [ -n "$WATCHER_PID" ] && kill -0 "$WATCHER_PID" 2>/dev/null; then
-      # Watcher still alive — this is NOT a real session end (likely compaction).
-      # Do nothing — session is still active.
-      exit 0
-    fi
+  # For project-scoped sessions, ONLY do destructive cleanup when explicitly
+  # confirmed via /bridge stop (BRIDGE_CLEANUP_CONFIRMED=1).
+  # The SessionEnd hook fires during compaction and other non-terminal events.
+  # The watcher-alive heuristic was unreliable (watcher can die during compaction),
+  # so we now require explicit confirmation for all project session cleanup.
+  if [ "$CONFIRMED" != "1" ]; then
+    # Not confirmed — this is a non-terminal event (compaction, etc.)
+    # Only clean up the bridge-listen PID file (lightweight)
+    rm -f "$SESSION_DIR/bridge-listen.pid" "$SESSION_DIR/bridge-listen-child.pid" 2>/dev/null || true
+    exit 0
   fi
 
   # Past this point, we're doing full cleanup — kill the watcher first
