@@ -217,7 +217,16 @@ The loop:
 
 5. **IMMEDIATELY go back to step 2.** Run `bridge-listen.sh` again. Do NOT stop. Do NOT ask the user what to do next. Keep listening.
 
-**CRITICAL:** After handling each message, you MUST immediately run `bridge-listen.sh` again to continue listening. This is a continuous loop. The only way to exit is the user pressing Ctrl+C. NEVER break the loop.
+**CRITICAL — RESILIENCE RULES:**
+
+- After handling each message, you MUST immediately run `bridge-listen.sh` again. This is a continuous loop.
+- **The ONLY way to exit is the user pressing Ctrl+C or saying "stop listening".** NEVER break the loop for any other reason.
+- **If `bridge-listen.sh` exits with an error:** Retry immediately. Do not stop. Do not ask what to do. Just run it again. Transient errors (hook failures, timeouts, filesystem hiccups) are normal and resolve on retry.
+- **If `bridge-listen.sh` times out (exit code 1):** This is normal — it means no message arrived within the timeout window. Run it again immediately.
+- **If you receive a "UserPromptSubmit hook error" or similar:** Ignore the error and re-enter the listen loop. These are non-fatal.
+- **If interrupted by the system or a prompt:** After handling the interruption, resume the standby loop. Re-run `bridge-listen.sh` with the same session ID.
+- **NEVER say "stopping standby" or "exiting listen mode"** unless the user explicitly told you to stop. If you find yourself about to say that, run `bridge-listen.sh` instead.
+- **If in doubt: run `bridge-listen.sh` again.** The default action is ALWAYS to continue listening.
 
 ### `decisions`
 
