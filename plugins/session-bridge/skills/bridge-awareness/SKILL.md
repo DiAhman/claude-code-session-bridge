@@ -94,7 +94,15 @@ This blocks until a message arrives (via `inotifywait` on Linux, `fswatch` on ma
 
 **You MUST keep the standby loop going.** After handling every message, run `bridge-listen.sh` again. Never stop to ask what to do next. Never break the loop unless the user presses Ctrl+C.
 
-**Resilience:** If `bridge-listen.sh` exits with an error, retry immediately — do not stop or ask the user. If a hook error occurs, ignore it and re-enter the loop. If you are interrupted by the system, resume the loop after handling the interruption. The default action is ALWAYS to run `bridge-listen.sh` again. Never voluntarily exit standby.
+**Resilience:** If `bridge-listen.sh` exits with an error or timeout, retry immediately — do not stop or ask the user. If a hook error occurs, ignore it and re-enter the loop. The default action is ALWAYS to run `bridge-listen.sh` again. Never voluntarily exit standby.
+
+**User interrupt (Ctrl+C/Escape):** When the user interrupts the running `bridge-listen.sh` via Ctrl+C or Escape, this is them telling you to stop. Do NOT resume the loop. Say "Standby paused" and clean up orphaned processes:
+```bash
+MY_SESSION=$(bash "${CLAUDE_PLUGIN_ROOT}/scripts/get-session-id.sh" 2>/dev/null || true)
+[ -n "$MY_SESSION" ] && pkill -f "inotifywait.*$MY_SESSION" 2>/dev/null || true
+[ -n "$MY_SESSION" ] && pkill -f "fswatch.*$MY_SESSION" 2>/dev/null || true
+```
+The user can resume with `/bridge standby`.
 
 ---
 

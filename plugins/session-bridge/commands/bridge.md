@@ -220,13 +220,30 @@ The loop:
 **CRITICAL — RESILIENCE RULES:**
 
 - After handling each message, you MUST immediately run `bridge-listen.sh` again. This is a continuous loop.
-- **The ONLY way to exit is the user pressing Ctrl+C or saying "stop listening".** NEVER break the loop for any other reason.
 - **If `bridge-listen.sh` exits with an error:** Retry immediately. Do not stop. Do not ask what to do. Just run it again. Transient errors (hook failures, timeouts, filesystem hiccups) are normal and resolve on retry.
 - **If `bridge-listen.sh` times out (exit code 1):** This is normal — it means no message arrived within the timeout window. Run it again immediately.
 - **If you receive a "UserPromptSubmit hook error" or similar:** Ignore the error and re-enter the listen loop. These are non-fatal.
-- **If interrupted by the system or a prompt:** After handling the interruption, resume the standby loop. Re-run `bridge-listen.sh` with the same session ID.
-- **NEVER say "stopping standby" or "exiting listen mode"** unless the user explicitly told you to stop. If you find yourself about to say that, run `bridge-listen.sh` instead.
+- **NEVER say "stopping standby" or "exiting listen mode"** unless the user told you to stop. If you find yourself about to say that, run `bridge-listen.sh` instead.
 - **If in doubt: run `bridge-listen.sh` again.** The default action is ALWAYS to continue listening.
+
+**HOW THE USER STOPS STANDBY:**
+
+The user stops standby by pressing **Ctrl+C** or **Escape** while `bridge-listen.sh` is running. When this happens:
+1. Claude Code interrupts the running Bash command
+2. **You MUST recognize this as the user wanting to stop.** Do NOT resume the loop.
+3. Tell the user: "Standby paused. You can resume with `/bridge standby` or give me other instructions."
+4. Clean up any orphaned listener processes:
+   ```bash
+   MY_SESSION=$(bash "${CLAUDE_PLUGIN_ROOT}/scripts/get-session-id.sh" 2>/dev/null || true)
+   if [ -n "$MY_SESSION" ]; then
+     pkill -f "inotifywait.*$MY_SESSION" 2>/dev/null || true
+     pkill -f "fswatch.*$MY_SESSION" 2>/dev/null || true
+   fi
+   ```
+
+**How to distinguish user interrupt vs system error:**
+- **User interrupt** = Ctrl+C/Escape: the Bash tool is cancelled and you regain control. The user is waiting for you. **Stop the loop.**
+- **Script error** = `bridge-listen.sh` returns an exit code but you're still in your loop context (no tool cancellation). **Retry the loop.**
 
 ### `decisions`
 
