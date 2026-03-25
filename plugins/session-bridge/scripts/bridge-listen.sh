@@ -44,39 +44,33 @@ if [ ! -d "$INBOX" ]; then
   exit 1
 fi
 
-# --- Kill previous bridge-listen.sh instance (prevents process leak) ---
-PID_FILE="$SESSION_DIR/bridge-listen.pid"
+# --- Exclusive lock: only one bridge-listen.sh per session ---
+# Uses flock to prevent race conditions where multiple listeners spawn
+# before the PID file cleanup can catch them. This is the definitive fix
+# for the process leak that affected sessions with high message volume.
+LOCK_FILE="$SESSION_DIR/bridge-listen.lock"
 WATCHER_CHILD_FILE="$SESSION_DIR/bridge-listen-child.pid"
 
-if [ -f "$PID_FILE" ]; then
-  OLD_PID=$(cat "$PID_FILE" 2>/dev/null || echo "")
-  if [ -n "$OLD_PID" ] && [ "$OLD_PID" != "$$" ]; then
-    # Kill the old listener's tracked inotifywait/fswatch child first
-    if [ -f "$WATCHER_CHILD_FILE" ]; then
-      OLD_CHILD=$(cat "$WATCHER_CHILD_FILE" 2>/dev/null || echo "")
-      [ -n "$OLD_CHILD" ] && kill "$OLD_CHILD" 2>/dev/null || true
-    fi
-    # Then kill children by parent (in case child PID file was stale)
-    pkill -P "$OLD_PID" 2>/dev/null || true
-    kill "$OLD_PID" 2>/dev/null || true
-  fi
+exec 9>"$LOCK_FILE"
+if ! flock -n 9; then
+  # Another listener already holds the lock — exit immediately
+  exit 0
 fi
+# Lock acquired — we are the only listener for this session
 
-# Also kill any orphaned inotifywait/fswatch watching THIS inbox
-# (catches reparented-to-init orphans that pkill -P can't find)
+# Kill any orphaned inotifywait/fswatch watching THIS inbox
+# (catches reparented-to-init orphans from previous sessions)
 for ORPHAN_PID in $(pgrep -f "inotifywait.*$INBOX" 2>/dev/null || true); do
+  [ "$ORPHAN_PID" = "$$" ] && continue
   kill "$ORPHAN_PID" 2>/dev/null || true
 done
 for ORPHAN_PID in $(pgrep -f "fswatch.*$INBOX" 2>/dev/null || true); do
+  [ "$ORPHAN_PID" = "$$" ] && continue
   kill "$ORPHAN_PID" 2>/dev/null || true
 done
 
-PID_TMP=$(mktemp "$SESSION_DIR/bridge-listen.pid.XXXXXX")
-echo $$ > "$PID_TMP"
-mv "$PID_TMP" "$PID_FILE"
-
-# Clean up PID file and child PID file on exit
-trap 'rm -f "$PID_FILE" "$WATCHER_CHILD_FILE" 2>/dev/null; exit' EXIT INT TERM
+# Clean up on exit (lock file descriptor auto-releases on process exit)
+trap 'rm -f "$WATCHER_CHILD_FILE" "$LOCK_FILE" 2>/dev/null; exit' EXIT INT TERM
 
 # Detect filesystem watcher
 if command -v inotifywait >/dev/null 2>&1; then

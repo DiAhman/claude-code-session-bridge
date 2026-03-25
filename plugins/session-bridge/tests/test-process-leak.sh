@@ -29,35 +29,37 @@ SESSION_DIR_A="$BRIDGE_DIR/projects/leak-test/sessions/$SID_A"
 
 echo "=== test-process-leak.sh ==="
 
-# --- Issue #1: PID file management ---
+# --- Issue #1: flock-based exclusive listener ---
 
-# Test 1: Sequential listeners with timeout=1 don't leave stale PIDs
+# Test 1: Sequential listeners don't leave stale lock files
 BRIDGE_DIR="$BRIDGE_DIR" bash "$LISTEN" "$SID_A" 1 >/dev/null 2>&1 || true
 BRIDGE_DIR="$BRIDGE_DIR" bash "$LISTEN" "$SID_A" 1 >/dev/null 2>&1 || true
 BRIDGE_DIR="$BRIDGE_DIR" bash "$LISTEN" "$SID_A" 1 >/dev/null 2>&1 || true
 
-PID_FILE="$SESSION_DIR_A/bridge-listen.pid"
-if [ -f "$PID_FILE" ]; then
-  STALE=$(cat "$PID_FILE" 2>/dev/null || echo "")
-  if [ -n "$STALE" ] && kill -0 "$STALE" 2>/dev/null; then
-    echo "  FAIL: stale listener process running after sequential calls"; FAIL=$((FAIL + 1))
+LOCK_FILE="$SESSION_DIR_A/bridge-listen.lock"
+if [ -f "$LOCK_FILE" ]; then
+  # Lock file may exist but should not be held (flock released on exit)
+  if flock -n "$LOCK_FILE" true 2>/dev/null; then
+    echo "  PASS: lock file exists but not held after sequential listeners"; PASS=$((PASS + 1))
   else
-    echo "  PASS: no stale process after sequential listeners"; PASS=$((PASS + 1))
+    echo "  FAIL: lock still held after sequential listeners"; FAIL=$((FAIL + 1))
   fi
 else
-  echo "  PASS: PID file cleaned up after sequential listeners"; PASS=$((PASS + 1))
+  echo "  PASS: lock file cleaned up after sequential listeners"; PASS=$((PASS + 1))
 fi
 
-# Test 2: A new listener updates the PID file (kills old recorded PID)
-# Pre-populate PID file with a fake PID
-echo "99999" > "$PID_FILE"
-BRIDGE_DIR="$BRIDGE_DIR" bash "$LISTEN" "$SID_A" 1 >/dev/null 2>&1 || true
-if [ -f "$PID_FILE" ]; then
-  NEW_PID=$(cat "$PID_FILE" 2>/dev/null || echo "99999")
-  assert_eq "PID file updated from fake" "true" "$([ "$NEW_PID" != "99999" ] && echo true || echo false)"
-else
-  echo "  PASS: PID file cleaned up (listener exited)"; PASS=$((PASS + 1))
-fi
+# Test 2: Second concurrent listener exits immediately (flock exclusion)
+# Start a long listener in background
+BRIDGE_DIR="$BRIDGE_DIR" bash "$LISTEN" "$SID_A" 30 >/dev/null 2>&1 &
+FIRST_BG=$!
+sleep 1
+# Try to start a second — should exit 0 immediately (lock held)
+SECOND_RC=0
+BRIDGE_DIR="$BRIDGE_DIR" bash "$LISTEN" "$SID_A" 30 >/dev/null 2>&1 || SECOND_RC=$?
+assert_eq "second listener exits cleanly (flock exclusion)" "0" "$SECOND_RC"
+kill "$FIRST_BG" 2>/dev/null || true
+pkill -P "$FIRST_BG" 2>/dev/null || true
+sleep 0.5
 
 # --- Issue #2: task-assign delivery ---
 echo ""
