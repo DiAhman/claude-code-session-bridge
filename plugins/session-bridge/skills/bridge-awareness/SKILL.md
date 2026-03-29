@@ -85,10 +85,10 @@ Do your assigned task. While working, the `PostToolUse` hook fires `check-inbox.
 After finishing all work and sending results, **always** enter the standby listen loop. Never sit idle at the prompt.
 
 ```bash
-bash "${CLAUDE_PLUGIN_ROOT}/scripts/bridge-listen.sh" "$MY_SESSION" 60
+bash "${CLAUDE_PLUGIN_ROOT}/scripts/bridge-listen.sh" "$MY_SESSION" 90
 ```
 
-This blocks until a message arrives (via `inotifywait` on Linux, `fswatch` on macOS, or polling fallback) or 60 seconds elapse. When it returns:
+This blocks until a message arrives (via `inotifywait` on Linux, `fswatch` on macOS, or polling fallback) or 90 seconds elapse. When it returns:
 - If a message was received: handle it, then re-enter standby.
 - If timeout: re-enter standby immediately (the loop continues).
 
@@ -103,9 +103,19 @@ This blocks until a message arrives (via `inotifywait` on Linux, `fswatch` on ma
 - **NEVER use `killall inotifywait`** or `killall fswatch`. These kill watchers for ALL sessions. Use `pkill -f "inotifywait.*$MY_SESSION"` to scope to your session only.
 - **NEVER add cleanup commands before relaunching.** Just run:
   ```bash
-  bash "${CLAUDE_PLUGIN_ROOT}/scripts/bridge-listen.sh" "$MY_SESSION" 600
+  bash "${CLAUDE_PLUGIN_ROOT}/scripts/bridge-listen.sh" "$MY_SESSION" 90
   ```
   No `rm`, no `killall`, no `kill` before this. The script handles its own exclusion via flock.
+- **Use a timeout of 90 seconds** (not 600). Claude Code's Bash tool backgrounds commands after 120s. A backgrounded listener cannot reliably restart the standby loop — the notification arrives but no conversation turn exists to act on it. The script also caps at 110s internally as a safety net.
+
+**MESSAGE DELIVERY ARCHITECTURE:**
+
+Messages are delivered through two complementary paths — standby is NOT the only delivery mechanism:
+
+1. **Hooks (automatic, during active work):** `PostToolUse` and `UserPromptSubmit` hooks run `check-inbox.sh` after every tool call and every user prompt. Messages are delivered automatically during normal work without any standby loop. Rate-limited to every 5s.
+2. **Standby loop (for idle sessions):** When the session has no active work, the standby loop polls the inbox via `bridge-listen.sh`. Each cycle blocks for up to 90s (foreground), then restarts.
+
+Together these ensure messages are always delivered — hooks during active work, standby during idle periods.
 
 **User interrupt (Ctrl+C/Escape):** When the user interrupts the running `bridge-listen.sh` via Ctrl+C or Escape, this is them telling you to stop. Do NOT resume the loop. Say "Standby paused" and clean up orphaned watcher processes (scoped to YOUR session only):
 ```bash
@@ -242,7 +252,7 @@ This polls the inbox for up to 90 seconds looking for a reply with `inReplyTo` m
 When idle in the standby loop, `bridge-listen.sh` blocks until a message arrives:
 
 ```bash
-OUTPUT=$(bash "${CLAUDE_PLUGIN_ROOT}/scripts/bridge-listen.sh" "$MY_SESSION" 60)
+OUTPUT=$(bash "${CLAUDE_PLUGIN_ROOT}/scripts/bridge-listen.sh" "$MY_SESSION" 90)
 ```
 
 The output contains the message details including `FROM=`, `FROM_PROJECT=`, `TO_ID=`, `TYPE=`, `CONTENT=`, `MESSAGE_ID=`, `CONVERSATION_ID=`, and `IN_REPLY_TO=` fields. Parse these to determine how to handle the message.
@@ -485,7 +495,7 @@ You cannot continue. Enter standby and wait for a `human-response` message:
 ```bash
 # After sending human-input-needed with blocksWork: true
 # Enter standby — the response will arrive as a human-response message
-bash "${CLAUDE_PLUGIN_ROOT}/scripts/bridge-listen.sh" "$MY_SESSION" 60
+bash "${CLAUDE_PLUGIN_ROOT}/scripts/bridge-listen.sh" "$MY_SESSION" 90
 ```
 
 When the `human-response` arrives, read the decision and resume your task.

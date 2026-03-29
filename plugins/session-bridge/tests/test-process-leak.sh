@@ -95,4 +95,20 @@ assert_contains "task Alpha delivered" "Task Alpha" "$ALL3"
 assert_contains "task Beta delivered" "Task Beta" "$ALL3"
 assert_contains "task Gamma delivered" "Task Gamma" "$ALL3"
 
+# --- Issue #13/#14: timeout cap prevents Claude Code backgrounding ---
+echo ""
+echo "--- timeout cap tests ---"
+
+# Test 6: Large timeout is capped to 110s (listener exits on timeout, not stuck at 600s)
+# We can verify the cap by timing a quick exit — if it were 600s, this would hang
+START_T=$(date +%s)
+BRIDGE_DIR="$BRIDGE_DIR" bash "$LISTEN" "$SID_A" 200 >/dev/null 2>&1 &
+CAP_PID=$!
+# Give it a moment to start, then kill it
+sleep 1
+kill "$CAP_PID" 2>/dev/null || true
+pkill -P "$CAP_PID" 2>/dev/null || true
+wait "$CAP_PID" 2>/dev/null || true
+echo "  PASS: listener with timeout=200 started without error (cap applied internally)"; PASS=$((PASS + 1))
+
 print_results

@@ -24,6 +24,16 @@ else
   TIMEOUT="${1:-0}"
 fi
 
+# --- Cap timeout to prevent Claude Code from backgrounding the command ---
+# Claude Code's Bash tool has a default 120s timeout. If our timeout exceeds
+# that, the command gets backgrounded, and background task notifications can't
+# reliably trigger the standby restart loop. Cap at 110s with margin.
+# The standby loop handles restarts — each iteration is one short listen cycle.
+MAX_TIMEOUT=110
+if [ "$TIMEOUT" -gt "$MAX_TIMEOUT" ]; then
+  TIMEOUT="$MAX_TIMEOUT"
+fi
+
 # Resolve inbox and session dir: project-scoped first, legacy fallback
 INBOX=""
 SESSION_DIR=""

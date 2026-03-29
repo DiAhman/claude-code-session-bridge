@@ -233,9 +233,19 @@ The loop:
 - **NEVER use `killall inotifywait`** or `killall fswatch`. These are global kills that terminate watchers for ALL sessions, not just yours. If you need to kill your session's watcher, use `pkill -f "inotifywait.*$MY_SESSION"`.
 - **NEVER add `rm -f` commands before relaunching** `bridge-listen.sh`. No cleanup is needed — just run the script directly:
   ```bash
-  bash "${CLAUDE_PLUGIN_ROOT}/scripts/bridge-listen.sh" "$MY_SESSION" 600
+  bash "${CLAUDE_PLUGIN_ROOT}/scripts/bridge-listen.sh" "$MY_SESSION" 90
   ```
+- **Use a timeout of 90 seconds** (not 600). Claude Code's Bash tool backgrounds commands after 120s. A backgrounded command cannot reliably restart the standby loop. The script also has an internal cap of 110s as a safety net.
 - **Use at most 1 background shell** for bridge listening at any time. If you have a running listener, do NOT spawn another. The flock mechanism will cause the second to exit immediately, but you still consume a background shell slot.
+
+**MESSAGE DELIVERY ARCHITECTURE:**
+
+Messages are delivered through two complementary paths — you do NOT need to rely solely on the standby loop:
+
+1. **Hooks (automatic):** `PostToolUse` and `UserPromptSubmit` hooks automatically run `check-inbox.sh` after every tool call and every user prompt. This means messages are delivered during normal work without any standby loop. Rate-limited to every 5s.
+2. **Standby loop (for idle sessions):** When the session has no active work, the standby loop polls the inbox via `bridge-listen.sh`. Each cycle blocks for up to 90s (foreground), then restarts. This fills the gap when no hooks are firing.
+
+Together these ensure messages are always delivered — hooks during active work, standby during idle periods.
 
 **HOW THE USER STOPS STANDBY:**
 
