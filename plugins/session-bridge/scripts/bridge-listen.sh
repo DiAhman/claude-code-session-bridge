@@ -24,16 +24,6 @@ else
   TIMEOUT="${1:-0}"
 fi
 
-# --- Cap timeout to prevent Claude Code from backgrounding the command ---
-# Claude Code's Bash tool has a default 120s timeout. If our timeout exceeds
-# that, the command gets backgrounded, and background task notifications can't
-# reliably trigger the standby restart loop. Cap at 110s with margin.
-# The standby loop handles restarts — each iteration is one short listen cycle.
-MAX_TIMEOUT=110
-if [ "$TIMEOUT" -gt "$MAX_TIMEOUT" ]; then
-  TIMEOUT="$MAX_TIMEOUT"
-fi
-
 # Resolve inbox and session dir: project-scoped first, legacy fallback
 INBOX=""
 SESSION_DIR=""
@@ -161,7 +151,7 @@ while true; do
       if [ "$TIMEOUT" -gt 0 ]; then
         REMAINING=$((TIMEOUT - ELAPSED))
       else
-        REMAINING="$INTERVAL"
+        REMAINING=0  # inotifywait -t 0 = wait forever (event-driven, zero CPU)
       fi
       # Run inotifywait in background so we can track its PID for cleanup.
       # This prevents orphaned inotifywait processes when the parent exits.
@@ -197,7 +187,7 @@ while true; do
       if [ "$TIMEOUT" -gt 0 ]; then
         REMAINING=$((TIMEOUT - ELAPSED))
       else
-        REMAINING="$INTERVAL"
+        REMAINING=0  # timeout 0 = no limit (fswatch blocks until event)
       fi
       START_WAIT=$(date +%s)
       timeout "$REMAINING" fswatch --one-event "$INBOX" >/dev/null 2>&1 &

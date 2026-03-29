@@ -162,9 +162,9 @@ Store the session ID in a variable (e.g., `MY_SESSION`) for use throughout the l
 The loop:
 
 1. Tell the user: "Standing by for messages... (Ctrl+C to stop)"
-2. Run the listen script with YOUR session ID (this BLOCKS until a message arrives in YOUR inbox only):
+2. Run the listen script with YOUR session ID and timeout 0 (infinite). This BLOCKS until a message arrives in YOUR inbox — zero CPU, zero tokens while waiting. Claude Code will background it after ~120s; that is expected.
    ```bash
-   bash "${CLAUDE_PLUGIN_ROOT}/scripts/bridge-listen.sh" "$MY_SESSION"
+   bash "${CLAUDE_PLUGIN_ROOT}/scripts/bridge-listen.sh" "$MY_SESSION" 0
    ```
 3. When a message arrives, parse the output:
    - Lines before `---` are metadata (MESSAGE_ID, FROM_ID, TO_ID, FROM_PROJECT, TYPE, IN_REPLY_TO)
@@ -228,24 +228,24 @@ The loop:
 
 **CRITICAL — PROCESS MANAGEMENT RULES (prevents zombie listener accumulation):**
 
-- **Run `bridge-listen.sh` in FOREGROUND (blocking).** Do NOT append `&` or run it in the background. The listen call blocks until a message arrives or timeout — this naturally serializes retries and prevents accumulation.
 - **NEVER delete `bridge-listen.lock`.** Do NOT run `rm -f ...bridge-listen.lock` before or after launching the listener. The lock file is a coordination point for flock — deleting it defeats the exclusive lock and causes duplicate listeners. flock releases automatically when the process exits.
 - **NEVER use `killall inotifywait`** or `killall fswatch`. These are global kills that terminate watchers for ALL sessions, not just yours. If you need to kill your session's watcher, use `pkill -f "inotifywait.*$MY_SESSION"`.
 - **NEVER add `rm -f` commands before relaunching** `bridge-listen.sh`. No cleanup is needed — just run the script directly:
   ```bash
-  bash "${CLAUDE_PLUGIN_ROOT}/scripts/bridge-listen.sh" "$MY_SESSION" 90
+  bash "${CLAUDE_PLUGIN_ROOT}/scripts/bridge-listen.sh" "$MY_SESSION" 0
   ```
-- **Use a timeout of 90 seconds** (not 600). Claude Code's Bash tool backgrounds commands after 120s. A backgrounded command cannot reliably restart the standby loop. The script also has an internal cap of 110s as a safety net.
-- **Use at most 1 background shell** for bridge listening at any time. If you have a running listener, do NOT spawn another. The flock mechanism will cause the second to exit immediately, but you still consume a background shell slot.
+- **Use timeout 0 (infinite).** The listener uses `inotifywait` which blocks at zero CPU until a file event occurs — no polling, no cycling, no token cost. Claude Code will background the command after ~120s — **this is expected and correct.** The listener continues blocking in the background until a message arrives, then delivers it via background task completion.
+- **Do NOT use short timeouts (e.g., 90s, 120s).** Short timeouts cause the listener to exit on timeout, which triggers a restart cycle. Each cycle burns tokens for nothing. The whole point of `inotifywait` is that it blocks indefinitely with zero overhead.
+- **After processing a message, start a new listener.** The previous listener exited when it delivered the message. Start a fresh one — it will be backgrounded again, and that's fine.
 
 **MESSAGE DELIVERY ARCHITECTURE:**
 
-Messages are delivered through two complementary paths — you do NOT need to rely solely on the standby loop:
+Messages reach you through two complementary paths:
 
-1. **Hooks (automatic):** `PostToolUse` and `UserPromptSubmit` hooks automatically run `check-inbox.sh` after every tool call and every user prompt. This means messages are delivered during normal work without any standby loop. Rate-limited to every 5s.
-2. **Standby loop (for idle sessions):** When the session has no active work, the standby loop polls the inbox via `bridge-listen.sh`. Each cycle blocks for up to 90s (foreground), then restarts. This fills the gap when no hooks are firing.
+1. **Standby listener (for idle sessions):** `bridge-listen.sh` with `inotifywait` blocks indefinitely at zero CPU/token cost until a message arrives. Claude Code backgrounds it — that's fine. When a message arrives, the background task completes and delivers it. **This is the primary path when idle.**
+2. **Hooks (during active work):** `PostToolUse` and `UserPromptSubmit` hooks run `check-inbox.sh` after every tool call and user prompt. Rate-limited to every 5s. **This is the primary path during active work.**
 
-Together these ensure messages are always delivered — hooks during active work, standby during idle periods.
+Together these ensure messages are always delivered — the standby listener during idle periods, hooks during active work.
 
 **HOW THE USER STOPS STANDBY:**
 
