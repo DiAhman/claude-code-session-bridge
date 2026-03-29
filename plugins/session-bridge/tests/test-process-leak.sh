@@ -31,24 +31,25 @@ echo "=== test-process-leak.sh ==="
 
 # --- Issue #1: flock-based exclusive listener ---
 
-# Test 1: Sequential listeners don't leave stale lock files
+# Test 1: Lock file persists after listener exits (never deleted)
 BRIDGE_DIR="$BRIDGE_DIR" bash "$LISTEN" "$SID_A" 1 >/dev/null 2>&1 || true
-BRIDGE_DIR="$BRIDGE_DIR" bash "$LISTEN" "$SID_A" 1 >/dev/null 2>&1 || true
-BRIDGE_DIR="$BRIDGE_DIR" bash "$LISTEN" "$SID_A" 1 >/dev/null 2>&1 || true
-
 LOCK_FILE="$SESSION_DIR_A/bridge-listen.lock"
-if [ -f "$LOCK_FILE" ]; then
-  # Lock file may exist but should not be held (flock released on exit)
-  if flock -n "$LOCK_FILE" true 2>/dev/null; then
-    echo "  PASS: lock file exists but not held after sequential listeners"; PASS=$((PASS + 1))
-  else
-    echo "  FAIL: lock still held after sequential listeners"; FAIL=$((FAIL + 1))
-  fi
+assert_eq "lock file persists after listener exit" "true" "$([ -f "$LOCK_FILE" ] && echo true || echo false)"
+
+# Test 2: Lock is NOT held after listener exits (flock releases on fd close)
+if flock -n "$LOCK_FILE" true 2>/dev/null; then
+  echo "  PASS: lock not held after listener exit"; PASS=$((PASS + 1))
 else
-  echo "  PASS: lock file cleaned up after sequential listeners"; PASS=$((PASS + 1))
+  echo "  FAIL: lock still held after listener exit"; FAIL=$((FAIL + 1))
 fi
 
-# Test 2: Second concurrent listener exits immediately (flock exclusion)
+# Test 3: Sequential listeners reuse the same lock file (same inode)
+INODE_BEFORE=$(stat -c %i "$LOCK_FILE" 2>/dev/null || stat -f %i "$LOCK_FILE" 2>/dev/null)
+BRIDGE_DIR="$BRIDGE_DIR" bash "$LISTEN" "$SID_A" 1 >/dev/null 2>&1 || true
+INODE_AFTER=$(stat -c %i "$LOCK_FILE" 2>/dev/null || stat -f %i "$LOCK_FILE" 2>/dev/null)
+assert_eq "sequential listeners reuse same lock inode" "$INODE_BEFORE" "$INODE_AFTER"
+
+# Test 4: Second concurrent listener exits immediately (flock exclusion)
 # Start a long listener in background
 BRIDGE_DIR="$BRIDGE_DIR" bash "$LISTEN" "$SID_A" 30 >/dev/null 2>&1 &
 FIRST_BG=$!

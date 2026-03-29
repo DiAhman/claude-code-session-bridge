@@ -226,13 +226,24 @@ The loop:
 - **NEVER say "stopping standby" or "exiting listen mode"** unless the user told you to stop. If you find yourself about to say that, run `bridge-listen.sh` instead.
 - **If in doubt: run `bridge-listen.sh` again.** The default action is ALWAYS to continue listening.
 
+**CRITICAL — PROCESS MANAGEMENT RULES (prevents zombie listener accumulation):**
+
+- **Run `bridge-listen.sh` in FOREGROUND (blocking).** Do NOT append `&` or run it in the background. The listen call blocks until a message arrives or timeout — this naturally serializes retries and prevents accumulation.
+- **NEVER delete `bridge-listen.lock`.** Do NOT run `rm -f ...bridge-listen.lock` before or after launching the listener. The lock file is a coordination point for flock — deleting it defeats the exclusive lock and causes duplicate listeners. flock releases automatically when the process exits.
+- **NEVER use `killall inotifywait`** or `killall fswatch`. These are global kills that terminate watchers for ALL sessions, not just yours. If you need to kill your session's watcher, use `pkill -f "inotifywait.*$MY_SESSION"`.
+- **NEVER add `rm -f` commands before relaunching** `bridge-listen.sh`. No cleanup is needed — just run the script directly:
+  ```bash
+  bash "${CLAUDE_PLUGIN_ROOT}/scripts/bridge-listen.sh" "$MY_SESSION" 600
+  ```
+- **Use at most 1 background shell** for bridge listening at any time. If you have a running listener, do NOT spawn another. The flock mechanism will cause the second to exit immediately, but you still consume a background shell slot.
+
 **HOW THE USER STOPS STANDBY:**
 
 The user stops standby by pressing **Ctrl+C** or **Escape** while `bridge-listen.sh` is running. When this happens:
 1. Claude Code interrupts the running Bash command
 2. **You MUST recognize this as the user wanting to stop.** Do NOT resume the loop.
 3. Tell the user: "Standby paused. You can resume with `/bridge standby` or give me other instructions."
-4. Clean up any orphaned listener processes:
+4. Clean up any orphaned watcher processes (scoped to YOUR session only):
    ```bash
    MY_SESSION=$(bash "${CLAUDE_PLUGIN_ROOT}/scripts/get-session-id.sh" 2>/dev/null || true)
    if [ -n "$MY_SESSION" ]; then
@@ -240,6 +251,7 @@ The user stops standby by pressing **Ctrl+C** or **Escape** while `bridge-listen
      pkill -f "fswatch.*$MY_SESSION" 2>/dev/null || true
    fi
    ```
+   Do NOT delete `bridge-listen.lock`. Do NOT use `killall`.
 
 **How to distinguish user interrupt vs system error:**
 - **User interrupt** = Ctrl+C/Escape: the Bash tool is cancelled and you regain control. The user is waiting for you. **Stop the loop.**

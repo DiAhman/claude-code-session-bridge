@@ -69,8 +69,12 @@ for ORPHAN_PID in $(pgrep -f "fswatch.*$INBOX" 2>/dev/null || true); do
   kill "$ORPHAN_PID" 2>/dev/null || true
 done
 
-# Clean up on exit (lock file descriptor auto-releases on process exit)
-trap 'rm -f "$WATCHER_CHILD_FILE" "$LOCK_FILE" 2>/dev/null; exit' EXIT INT TERM
+# Clean up on exit.
+# IMPORTANT: Do NOT delete the lock file. flock releases the advisory lock
+# automatically when the file descriptor closes (process exit). The lock file
+# must persist on disk so the NEXT listener flocks the SAME inode. Deleting it
+# causes the next listener to create a new file (new inode), bypassing the lock.
+trap 'rm -f "$WATCHER_CHILD_FILE" 2>/dev/null; exit' EXIT INT TERM
 
 # Detect filesystem watcher
 if command -v inotifywait >/dev/null 2>&1; then

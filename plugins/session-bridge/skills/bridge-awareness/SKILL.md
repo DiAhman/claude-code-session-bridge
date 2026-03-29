@@ -96,13 +96,24 @@ This blocks until a message arrives (via `inotifywait` on Linux, `fswatch` on ma
 
 **Resilience:** If `bridge-listen.sh` exits with an error or timeout, retry immediately — do not stop or ask the user. If a hook error occurs, ignore it and re-enter the loop. The default action is ALWAYS to run `bridge-listen.sh` again. Never voluntarily exit standby.
 
-**User interrupt (Ctrl+C/Escape):** When the user interrupts the running `bridge-listen.sh` via Ctrl+C or Escape, this is them telling you to stop. Do NOT resume the loop. Say "Standby paused" and clean up orphaned processes:
+**CRITICAL — Process management rules (prevents zombie listener accumulation):**
+
+- **Run `bridge-listen.sh` in FOREGROUND (blocking).** Do NOT append `&` or background it. The call blocks until a message arrives — this serializes retries and prevents process accumulation.
+- **NEVER delete `bridge-listen.lock`.** Do NOT run `rm -f ...bridge-listen.lock`. The lock file must persist for flock to work. Deleting it creates a new inode, defeating the exclusive lock. flock releases automatically on process exit.
+- **NEVER use `killall inotifywait`** or `killall fswatch`. These kill watchers for ALL sessions. Use `pkill -f "inotifywait.*$MY_SESSION"` to scope to your session only.
+- **NEVER add cleanup commands before relaunching.** Just run:
+  ```bash
+  bash "${CLAUDE_PLUGIN_ROOT}/scripts/bridge-listen.sh" "$MY_SESSION" 600
+  ```
+  No `rm`, no `killall`, no `kill` before this. The script handles its own exclusion via flock.
+
+**User interrupt (Ctrl+C/Escape):** When the user interrupts the running `bridge-listen.sh` via Ctrl+C or Escape, this is them telling you to stop. Do NOT resume the loop. Say "Standby paused" and clean up orphaned watcher processes (scoped to YOUR session only):
 ```bash
 MY_SESSION=$(bash "${CLAUDE_PLUGIN_ROOT}/scripts/get-session-id.sh" 2>/dev/null || true)
 [ -n "$MY_SESSION" ] && pkill -f "inotifywait.*$MY_SESSION" 2>/dev/null || true
 [ -n "$MY_SESSION" ] && pkill -f "fswatch.*$MY_SESSION" 2>/dev/null || true
 ```
-The user can resume with `/bridge standby`.
+Do NOT delete `bridge-listen.lock`. Do NOT use `killall`. The user can resume with `/bridge standby`.
 
 ---
 
@@ -642,12 +653,14 @@ This shows session ID, project name, role, status, and specialty for each peer.
 ## Important Rules
 
 1. **Always enter standby after finishing work.** Never idle at the prompt. Run `bridge-listen.sh` in a loop.
-2. **Always use `send-message.sh`** — never write message JSON files directly.
-3. **Always use `get-session-id.sh`** to get your session ID — never read `.claude/bridge-session` directly (relative path breaks when working directory changes).
-4. **Include real code in responses** — read actual files and paste relevant sections.
-5. **Escalate, don't guess** — if outside your specialty, route to the right peer.
-6. **Resolution summaries flow up** — `task-complete` carries enough detail for the receiver to continue.
-7. **Handle follow-up questions** — if a peer's response asks for clarification, answer and continue the conversation.
-8. **Act on responses** — don't just display them. Use them to update code, fix errors, apply changes.
-9. **Track conversations** — before standby, check for pending conversations so context survives compaction.
-10. **Route to the right peer** when connected to multiple. Use topology hints, then specialty matching, then orchestrator query.
+2. **Always use `send-message.sh` via the Bash tool** — never write message JSON files directly.
+3. **NEVER use the `SendMessage` tool for bridge communication.** The `SendMessage` tool routes through Claude Code's internal teammate system, NOT the bridge filesystem inbox. Messages sent via `SendMessage` will never reach `bridge-listen.sh`. Always use `send-message.sh` via the Bash tool instead.
+4. **Always use `get-session-id.sh`** to get your session ID — never read `.claude/bridge-session` directly (relative path breaks when working directory changes).
+5. **Include real code in responses** — read actual files and paste relevant sections.
+6. **Escalate, don't guess** — if outside your specialty, route to the right peer.
+7. **Resolution summaries flow up** — `task-complete` carries enough detail for the receiver to continue.
+8. **Handle follow-up questions** — if a peer's response asks for clarification, answer and continue the conversation.
+9. **Act on responses** — don't just display them. Use them to update code, fix errors, apply changes.
+10. **Track conversations** — before standby, check for pending conversations so context survives compaction.
+11. **Route to the right peer** when connected to multiple. Use topology hints, then specialty matching, then orchestrator query.
+12. **NEVER delete `bridge-listen.lock`** or use `killall` — see Standby process management rules above.
