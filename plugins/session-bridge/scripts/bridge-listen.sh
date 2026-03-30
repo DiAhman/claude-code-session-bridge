@@ -10,6 +10,21 @@ set -euo pipefail
 BRIDGE_DIR="${BRIDGE_DIR:-$HOME/.claude/session-bridge}"
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 
+# --- Logging ---
+_log() {
+  local LOG_FILE="${SESSION_DIR:-/tmp}/bridge-listen.log"
+  local TS
+  TS=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+  echo "[$TS] ($$) $*" >> "$LOG_FILE" 2>/dev/null || true
+}
+# Truncate log if over 200 lines (keep tail) — called once at startup after SESSION_DIR is set
+_log_rotate() {
+  local LOG_FILE="$SESSION_DIR/bridge-listen.log"
+  if [ -f "$LOG_FILE" ] && [ "$(wc -l < "$LOG_FILE")" -gt 200 ]; then
+    tail -100 "$LOG_FILE" > "$LOG_FILE.tmp" && mv "$LOG_FILE.tmp" "$LOG_FILE" 2>/dev/null || true
+  fi
+}
+
 # Get session ID: from argument, or from get-session-id.sh
 if [ -n "${1:-}" ] && [ "${1:-}" != "0" ] && ! echo "$1" | grep -qE '^[0-9]+$'; then
   # First arg looks like a session ID (not a number/timeout)
@@ -53,10 +68,12 @@ WATCHER_CHILD_FILE="$SESSION_DIR/bridge-listen-child.pid"
 
 exec 9>"$LOCK_FILE"
 if ! flock -n 9; then
-  # Another listener already holds the lock — exit immediately
+  _log "BLOCKED — another listener holds lock, exiting"
   exit 0
 fi
 # Lock acquired — we are the only listener for this session
+_log_rotate
+_log "START session=$SESSION_ID timeout=$TIMEOUT watcher=$( command -v inotifywait >/dev/null 2>&1 && echo inotifywait || (command -v fswatch >/dev/null 2>&1 && echo fswatch || echo poll) )"
 
 # Kill any orphaned inotifywait/fswatch watching THIS inbox
 # (catches reparented-to-init orphans from previous sessions)
@@ -74,7 +91,7 @@ done
 # automatically when the file descriptor closes (process exit). The lock file
 # must persist on disk so the NEXT listener flocks the SAME inode. Deleting it
 # causes the next listener to create a new file (new inode), bypassing the lock.
-trap 'rm -f "$WATCHER_CHILD_FILE" 2>/dev/null; exit' EXIT INT TERM
+trap '_log "EXIT signal=$?"; rm -f "$WATCHER_CHILD_FILE" 2>/dev/null; exit' EXIT INT TERM
 
 # Detect filesystem watcher
 if command -v inotifywait >/dev/null 2>&1; then
@@ -91,6 +108,7 @@ INTERVAL=3
 while true; do
   # Timeout check (0 = infinite)
   if [ "$TIMEOUT" -gt 0 ] && [ "$ELAPSED" -ge "$TIMEOUT" ]; then
+    _log "TIMEOUT elapsed=${ELAPSED}s"
     exit 1
   fi
 
@@ -133,6 +151,8 @@ while true; do
       rm -f "$TMP" 2>/dev/null || true
     }
 
+    _log "MESSAGE id=$MSG_ID type=$MSG_TYPE from=$FROM_ID ($FROM_PROJECT)"
+
     # Output message details for the agent
     echo "MESSAGE_ID=$MSG_ID"
     echo "FROM_ID=$FROM_ID"
@@ -155,6 +175,7 @@ while true; do
       fi
       # Run inotifywait in background so we can track its PID for cleanup.
       # This prevents orphaned inotifywait processes when the parent exits.
+      _log "WAIT inotifywait -t $REMAINING pid=$$"
       inotifywait -t "$REMAINING" -e create "$INBOX" >/dev/null 2>&1 &
       INOTIFY_PID=$!
       echo "$INOTIFY_PID" > "$WATCHER_CHILD_FILE"
@@ -163,21 +184,21 @@ while true; do
       rm -f "$WATCHER_CHILD_FILE" 2>/dev/null
       case "$WATCH_RC" in
         0)
-          # File event detected — re-scan
+          _log "EVENT file created in inbox"
           ELAPSED=$((ELAPSED + 1))
           ;;
         2)
-          # Timeout — update elapsed and let the loop re-check
+          _log "POLL timeout after ${REMAINING}s, re-checking"
           ELAPSED=$((ELAPSED + REMAINING))
           continue
           ;;
         *)
-          # Error (code 1 = directory deleted, inotify limit, etc.)
+          _log "ERROR inotifywait rc=$WATCH_RC"
           if [ ! -d "$INBOX" ]; then
+            _log "FATAL inbox directory gone"
             echo "Error: Inbox directory $INBOX no longer exists." >&2
             exit 1
           fi
-          # Fall back to polling for this cycle to avoid hot spin
           sleep "$INTERVAL"
           ELAPSED=$((ELAPSED + INTERVAL))
           ;;
