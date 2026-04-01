@@ -162,11 +162,13 @@ Store the session ID in a variable (e.g., `MY_SESSION`) for use throughout the l
 The loop:
 
 1. Tell the user: "Standing by for messages... (Ctrl+C to stop)"
-2. Run the listen script with YOUR session ID and timeout 0 (infinite). This BLOCKS until a message arrives in YOUR inbox — zero CPU, zero tokens while waiting. Claude Code will background it after ~120s; that is expected.
+2. Run the listen script with YOUR session ID and timeout 0 (infinite), using `run_in_background: true` on the Bash tool. This immediately backgrounds the command so the turn ends and zero tokens are consumed while idle. The listener blocks via `inotifywait` at zero CPU until a message arrives.
    ```bash
+   # IMPORTANT: call this with run_in_background: true on the Bash tool
    bash "${CLAUDE_PLUGIN_ROOT}/scripts/bridge-listen.sh" "$MY_SESSION" 0
    ```
-3. When a message arrives, parse the output:
+   After launching the background listener, output a brief status message (e.g., "Listening in background...") and **end your turn**. Do NOT call any more tools or keep the turn open. You will be automatically notified when the listener completes (message received).
+3. When the background listener completes and you receive the notification, parse the output:
    - Lines before `---` are metadata (MESSAGE_ID, FROM_ID, TO_ID, FROM_PROJECT, TYPE, IN_REPLY_TO)
    - Lines after `---` are the message content
 
@@ -215,11 +217,11 @@ The loop:
 
    **If TYPE=session-ended**: Note it and tell the user: "Peer [FROM_PROJECT] disconnected."
 
-5. **IMMEDIATELY go back to step 2.** Run `bridge-listen.sh` again. Do NOT stop. Do NOT ask the user what to do next. Keep listening.
+5. **IMMEDIATELY go back to step 2.** Run `bridge-listen.sh` again with `run_in_background: true`, output a brief status, and end your turn. Do NOT stop. Do NOT ask the user what to do next.
 
 **CRITICAL — RESILIENCE RULES:**
 
-- After handling each message, you MUST immediately run `bridge-listen.sh` again. This is a continuous loop.
+- After handling each message, you MUST immediately run `bridge-listen.sh` again with `run_in_background: true`. This is a continuous loop.
 - **If `bridge-listen.sh` exits with an error:** Retry immediately. Do not stop. Do not ask what to do. Just run it again. Transient errors (hook failures, timeouts, filesystem hiccups) are normal and resolve on retry.
 - **If `bridge-listen.sh` times out (exit code 1):** This is normal — it means no message arrived within the timeout window. Run it again immediately.
 - **If you receive a "UserPromptSubmit hook error" or similar:** Ignore the error and re-enter the listen loop. These are non-fatal.
@@ -234,9 +236,10 @@ The loop:
   ```bash
   bash "${CLAUDE_PLUGIN_ROOT}/scripts/bridge-listen.sh" "$MY_SESSION" 0
   ```
-- **Use timeout 0 (infinite).** The listener uses `inotifywait` which blocks at zero CPU until a file event occurs — no polling, no cycling, no token cost. Claude Code will background the command after ~120s — **this is expected and correct.** The listener continues blocking in the background until a message arrives, then delivers it via background task completion.
-- **Do NOT use short timeouts (e.g., 90s, 120s).** Short timeouts cause the listener to exit on timeout, which triggers a restart cycle. Each cycle burns tokens for nothing. The whole point of `inotifywait` is that it blocks indefinitely with zero overhead.
-- **After processing a message, start a new listener.** The previous listener exited when it delivered the message. Start a fresh one — it will be backgrounded again, and that's fine.
+- **Always use `run_in_background: true`** on the Bash tool when calling `bridge-listen.sh`. This guarantees immediate backgrounding so the turn ends and zero tokens are consumed. Do NOT run it in the foreground — foreground listeners keep the turn open and burn tokens even while idle.
+- **Use timeout 0 (infinite).** The listener uses `inotifywait` which blocks at zero CPU until a file event occurs — no polling, no cycling, no token cost.
+- **Do NOT use short timeouts (e.g., 90s, 120s).** Short timeouts cause the listener to exit on timeout, which triggers a restart cycle. Each cycle burns tokens for nothing.
+- **After processing a message, start a new background listener.** The previous listener exited when it delivered the message. Use `run_in_background: true` again.
 
 **MESSAGE DELIVERY ARCHITECTURE:**
 

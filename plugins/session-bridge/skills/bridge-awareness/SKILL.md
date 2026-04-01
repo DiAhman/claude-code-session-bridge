@@ -85,15 +85,16 @@ Do your assigned task. While working, the `PostToolUse` hook fires `check-inbox.
 After finishing all work and sending results, **always** enter standby. Never sit idle at the prompt.
 
 ```bash
+# IMPORTANT: call this with run_in_background: true on the Bash tool
 bash "${CLAUDE_PLUGIN_ROOT}/scripts/bridge-listen.sh" "$MY_SESSION" 0
 ```
 
-This blocks at zero CPU via `inotifywait` (Linux), `fswatch` (macOS), or polling fallback until a message arrives. **Timeout 0 means infinite — no cycling, no token cost while idle.** Claude Code will background the command after ~120s — this is expected and correct. The listener continues blocking in the background until a message arrives.
+**You MUST use `run_in_background: true`** on the Bash tool call. This immediately backgrounds the listener so your turn ends and zero tokens are consumed while idle. The listener blocks at zero CPU via `inotifywait` until a message arrives. After launching the background listener, output a brief status (e.g., "Listening...") and **end your turn**.
 
-When a message is delivered (via background task completion):
-- Parse the message, handle it by type, then **start a new listener** for the next message.
+When the background listener completes (message arrives), you will be notified automatically:
+- Parse the message, handle it by type, then **start a new background listener** for the next message.
 
-**After handling every message, run `bridge-listen.sh` again.** Never stop to ask what to do next. Never break the loop unless the user presses Ctrl+C.
+**After handling every message, run `bridge-listen.sh` again with `run_in_background: true`.** Never stop to ask what to do next. Never break the loop unless the user presses Ctrl+C.
 
 **Resilience:** If `bridge-listen.sh` exits with an error or timeout, retry immediately — do not stop or ask the user. If a hook error occurs, ignore it and re-enter the loop. The default action is ALWAYS to run `bridge-listen.sh` again. Never voluntarily exit standby.
 
@@ -106,9 +107,10 @@ When a message is delivered (via background task completion):
   bash "${CLAUDE_PLUGIN_ROOT}/scripts/bridge-listen.sh" "$MY_SESSION" 0
   ```
   No `rm`, no `killall`, no `kill` before this. The script handles its own exclusion via flock.
-- **Use timeout 0 (infinite).** The listener uses `inotifywait` which blocks at zero CPU until a message arrives. Claude Code will background the command after ~120s — **this is expected and correct.** No polling, no cycling, no token cost while idle.
+- **Always use `run_in_background: true`** on the Bash tool when calling `bridge-listen.sh`. This guarantees immediate backgrounding so the turn ends and zero tokens are consumed. Do NOT run it in the foreground — foreground listeners keep the turn open and burn tokens.
+- **Use timeout 0 (infinite).** The listener uses `inotifywait` which blocks at zero CPU until a message arrives. No polling, no cycling, no token cost while idle.
 - **Do NOT use short timeouts (e.g., 90s, 120s).** Short timeouts cause constant exit-restart cycling that burns tokens for nothing.
-- **After processing a message, start a new listener.** The old one exited when it delivered the message.
+- **After processing a message, start a new background listener.** The old one exited when it delivered the message. Use `run_in_background: true` again.
 
 **MESSAGE DELIVERY ARCHITECTURE:**
 
@@ -249,10 +251,11 @@ This polls the inbox for up to 90 seconds looking for a reply with `inReplyTo` m
 
 ### In Standby (bridge-listen.sh)
 
-When idle in the standby loop, `bridge-listen.sh` blocks until a message arrives:
+When idle, `bridge-listen.sh` runs in the background (via `run_in_background: true`) until a message arrives:
 
 ```bash
-OUTPUT=$(bash "${CLAUDE_PLUGIN_ROOT}/scripts/bridge-listen.sh" "$MY_SESSION" 0)
+# Use run_in_background: true on the Bash tool
+bash "${CLAUDE_PLUGIN_ROOT}/scripts/bridge-listen.sh" "$MY_SESSION" 0
 ```
 
 The output contains the message details including `FROM=`, `FROM_PROJECT=`, `TO_ID=`, `TYPE=`, `CONTENT=`, `MESSAGE_ID=`, `CONVERSATION_ID=`, and `IN_REPLY_TO=` fields. Parse these to determine how to handle the message.
@@ -494,7 +497,7 @@ You cannot continue. Enter standby and wait for a `human-response` message:
 
 ```bash
 # After sending human-input-needed with blocksWork: true
-# Enter standby — the response will arrive as a human-response message
+# Enter standby with run_in_background: true — the response will arrive as a human-response message
 bash "${CLAUDE_PLUGIN_ROOT}/scripts/bridge-listen.sh" "$MY_SESSION" 0
 ```
 
