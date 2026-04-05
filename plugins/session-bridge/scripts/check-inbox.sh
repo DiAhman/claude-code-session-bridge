@@ -1,16 +1,18 @@
 #!/usr/bin/env bash
 # scripts/check-inbox.sh — Check session inbox for pending messages.
-# v2: rate limiting, early exit for non-bridge sessions, project-scoped scanning.
-# Usage: check-inbox.sh [--rate-limited] [--summary-only]
+# v3: rate limiting, early exit for non-bridge sessions, project-scoped scanning, Stop hook support.
+# Usage: check-inbox.sh [--rate-limited] [--summary-only] [--stop-hook]
 # Env: BRIDGE_DIR (default: ~/.claude/session-bridge), BRIDGE_SESSION_ID, PROJECT_DIR
 set -euo pipefail
 
 # --- 1. Parse flags ---
 RATE_LIMITED=false
 SUMMARY_ONLY=false
+STOP_HOOK=false
 case "${1:-}" in
   --rate-limited) RATE_LIMITED=true ;;
   --summary-only) SUMMARY_ONLY=true ;;
+  --stop-hook) STOP_HOOK=true ;;
 esac
 
 BRIDGE_DIR="${BRIDGE_DIR:-$HOME/.claude/session-bridge}"
@@ -19,6 +21,7 @@ BRIDGE_DIR="${BRIDGE_DIR:-$HOME/.claude/session-bridge}"
 # If neither BRIDGE_SESSION_ID env nor .claude/bridge-session file exists, this
 # session has no bridge registration. Exit immediately with zero cost.
 if [ -z "${BRIDGE_SESSION_ID:-}" ] && [ ! -f "${PROJECT_DIR:-.}/.claude/bridge-session" ]; then
+  [ "$STOP_HOOK" = true ] && exit 0  # Stop hook: silent exit (no JSON)
   echo '{"continue": true}'
   exit 0
 fi
@@ -52,9 +55,18 @@ if [ -z "$MY_INBOX" ] || [ ! -d "$MY_INBOX" ]; then
   if [ -z "$MY_PROJECT_ID" ] && [ -d "$BRIDGE_DIR/sessions" ]; then
     SESSIONS_DIR="$BRIDGE_DIR/sessions"
   else
+    [ "$STOP_HOOK" = true ] && exit 0  # Stop hook: silent exit
     echo '{"continue": true}'
     exit 0
   fi
+fi
+
+# --- Reset stop counter on UserPromptSubmit (default mode, no flags) ---
+# When the user sends input, reset the safety counter. This signals the user
+# is engaged, so any Stop hook loop is not runaway.
+if [ "$RATE_LIMITED" = false ] && [ "$SUMMARY_ONLY" = false ] && [ "$STOP_HOOK" = false ] && [ -n "$MY_SESSION_ID" ]; then
+  STOP_COUNTER_FILE="$BRIDGE_DIR/.stop_counter_${MY_SESSION_ID}"
+  [ -f "$STOP_COUNTER_FILE" ] && echo "0" > "$STOP_COUNTER_FILE"
 fi
 
 # --- 4. Rate limiting (only with --rate-limited flag) ---
@@ -78,6 +90,18 @@ if [ "$RATE_LIMITED" = true ] && [ -n "$MY_SESSION_ID" ]; then
     fi
   fi
   echo "$NOW_EPOCH" > "$LAST_CHECK_FILE"
+fi
+
+# --- 4b. Stop hook safety counter (prevents infinite block loops) ---
+if [ "$STOP_HOOK" = true ] && [ -n "$MY_SESSION_ID" ]; then
+  STOP_COUNTER_FILE="$BRIDGE_DIR/.stop_counter_${MY_SESSION_ID}"
+  STOP_COUNTER=$(cat "$STOP_COUNTER_FILE" 2>/dev/null || echo 0)
+  if [ "$STOP_COUNTER" -ge 10 ]; then
+    # Safety cap reached — allow stop, reset counter. Messages stay pending
+    # and will be picked up by PostToolUse or UserPromptSubmit hooks.
+    echo "0" > "$STOP_COUNTER_FILE"
+    exit 0
+  fi
 fi
 
 NOW=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
@@ -270,10 +294,25 @@ else
 fi
 
 if [ "$TOTAL_COUNT" -eq 0 ]; then
+  if [ "$STOP_HOOK" = true ]; then
+    # No messages — allow stop, reset counter
+    [ -n "${STOP_COUNTER_FILE:-}" ] && echo "0" > "$STOP_COUNTER_FILE"
+    exit 0
+  fi
   echo '{"continue": true}'
   exit 0
 fi
 
 SYSTEM_MSG="=== CLAUDE BRIDGE: ${TOTAL_COUNT} pending message(s) ===\nYou MUST respond to queries and acknowledge pings before doing anything else.${ALL_MESSAGES}\n=== END BRIDGE ==="
+
+# --- Stop hook output: block stop and inject messages as additionalContext ---
+if [ "$STOP_HOOK" = true ]; then
+  STOP_COUNTER=$((STOP_COUNTER + 1))
+  echo "$STOP_COUNTER" > "$STOP_COUNTER_FILE"
+  jq -n --arg reason "${TOTAL_COUNT} bridge message(s) pending" \
+        --arg ctx "$SYSTEM_MSG" \
+    '{decision: "block", reason: $reason, hookSpecificOutput: {hookEventName: "Stop", additionalContext: $ctx}}'
+  exit 0
+fi
 
 jq -n --arg msg "$SYSTEM_MSG" '{continue: true, suppressOutput: false, systemMessage: $msg}'

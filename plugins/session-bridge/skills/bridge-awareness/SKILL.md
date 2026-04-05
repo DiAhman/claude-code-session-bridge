@@ -94,7 +94,7 @@ bash "${CLAUDE_PLUGIN_ROOT}/scripts/bridge-listen.sh" "$MY_SESSION" 0
 When the background listener completes (message arrives), you will be notified automatically:
 - Parse the message, handle it by type, then **start a new background listener** for the next message.
 
-**After handling every message, run `bridge-listen.sh` again with `run_in_background: true`.** Never stop to ask what to do next. Never break the loop unless the user presses Ctrl+C.
+**After handling every message, run `bridge-listen.sh` again with `run_in_background: true`.** Never stop to ask what to do next. Never break the loop unless the user presses Ctrl+C. **Note:** The `Stop` hook may catch additional queued messages before you go idle — if it injects more messages (you'll see "=== CLAUDE BRIDGE: N pending message(s) ===" context), handle those first, then relaunch the listener.
 
 **Resilience:** If `bridge-listen.sh` exits with an error or timeout, retry immediately — do not stop or ask the user. If a hook error occurs, ignore it and re-enter the loop. The default action is ALWAYS to run `bridge-listen.sh` again. Never voluntarily exit standby.
 
@@ -114,10 +114,11 @@ When the background listener completes (message arrives), you will be notified a
 
 **MESSAGE DELIVERY ARCHITECTURE:**
 
-Messages reach you through two complementary paths:
+Messages reach you through three complementary paths:
 
-1. **Standby listener (idle sessions):** `bridge-listen.sh` with `inotifywait` blocks indefinitely at zero cost until a message arrives. Claude Code backgrounds it — that's fine. When a message arrives, the background task completes and delivers it. **Primary path when idle.**
-2. **Hooks (active work):** `PostToolUse` and `UserPromptSubmit` hooks run `check-inbox.sh` after every tool call and user prompt. Rate-limited to every 5s. **Primary path during active work.**
+1. **Stop hook (turn-boundary burst draining):** When you finish any turn, the `Stop` hook fires `check-inbox.sh --stop-hook`. If messages are queued, it blocks the stop and injects them as context — you process them immediately without relaunching the listener. Drains multiple queued messages in rapid succession. Safety cap: 10 consecutive blocks.
+2. **Standby listener (idle sessions):** `bridge-listen.sh` with `inotifywait` blocks indefinitely at zero cost until a message arrives. Claude Code backgrounds it — that's fine. When a message arrives, the background task completes and delivers it. **Primary path when truly idle.**
+3. **Hooks (active work):** `PostToolUse` and `UserPromptSubmit` hooks run `check-inbox.sh` after every tool call and user prompt. Rate-limited to every 5s. **Primary path during active tool use.**
 
 **User interrupt (Ctrl+C/Escape):** When the user interrupts the running `bridge-listen.sh` via Ctrl+C or Escape, this is them telling you to stop. Do NOT resume the loop. Say "Standby paused" and clean up orphaned watcher processes (scoped to YOUR session only):
 ```bash

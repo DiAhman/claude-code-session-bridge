@@ -217,7 +217,7 @@ The loop:
 
    **If TYPE=session-ended**: Note it and tell the user: "Peer [FROM_PROJECT] disconnected."
 
-5. **IMMEDIATELY go back to step 2.** Run `bridge-listen.sh` again with `run_in_background: true`, output a brief status, and end your turn. Do NOT stop. Do NOT ask the user what to do next.
+5. **IMMEDIATELY go back to step 2.** Run `bridge-listen.sh` again with `run_in_background: true`, output a brief status, and end your turn. Do NOT stop. Do NOT ask the user what to do next. **Note:** The `Stop` hook may catch additional queued messages before you go idle — if it injects more messages (you'll see "=== CLAUDE BRIDGE: N pending message(s) ===" context), handle those first, then relaunch the listener.
 
 **CRITICAL — RESILIENCE RULES:**
 
@@ -243,12 +243,13 @@ The loop:
 
 **MESSAGE DELIVERY ARCHITECTURE:**
 
-Messages reach you through two complementary paths:
+Messages reach you through three complementary paths:
 
-1. **Standby listener (for idle sessions):** `bridge-listen.sh` with `inotifywait` blocks indefinitely at zero CPU/token cost until a message arrives. Claude Code backgrounds it — that's fine. When a message arrives, the background task completes and delivers it. **This is the primary path when idle.**
-2. **Hooks (during active work):** `PostToolUse` and `UserPromptSubmit` hooks run `check-inbox.sh` after every tool call and user prompt. Rate-limited to every 5s. **This is the primary path during active work.**
+1. **Stop hook (turn-boundary burst draining):** When you finish processing a message or any turn, the `Stop` hook fires `check-inbox.sh --stop-hook`. If messages are queued, it blocks the stop and injects them as context — you process them immediately without relaunching the listener. This drains multiple queued messages in rapid succession. Safety cap: 10 consecutive blocks, then allows stop.
+2. **Standby listener (for idle sessions):** `bridge-listen.sh` with `inotifywait` blocks indefinitely at zero CPU/token cost until a message arrives. Claude Code backgrounds it — that's fine. When a message arrives, the background task completes and delivers it. **This is the primary path when truly idle.**
+3. **Hooks (during active work):** `PostToolUse` and `UserPromptSubmit` hooks run `check-inbox.sh` after every tool call and user prompt. Rate-limited to every 5s. **This is the primary path during active tool use.**
 
-Together these ensure messages are always delivered — the standby listener during idle periods, hooks during active work.
+Together these ensure messages are always delivered — the Stop hook for burst draining at turn boundaries, the standby listener for waking from idle, and PostToolUse/UserPromptSubmit hooks during active work.
 
 **HOW THE USER STOPS STANDBY:**
 

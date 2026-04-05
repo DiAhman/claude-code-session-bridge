@@ -303,4 +303,97 @@ assert_contains "output has conversation flag in reply instruction" "conversatio
 
 rm -rf "$V2_TMPDIR"
 
+# ===================================================================
+# Stop hook tests (--stop-hook flag)
+# ===================================================================
+echo ""
+echo "--- Stop hook tests ---"
+
+# Fresh isolated environment for stop hook tests
+SH_TMPDIR=$(mktemp -d)
+SH_BRIDGE="$SH_TMPDIR/bridge"
+SH_PROJ_A="$SH_TMPDIR/proj-a"
+SH_PROJ_B="$SH_TMPDIR/proj-b"
+mkdir -p "$SH_PROJ_A" "$SH_PROJ_B"
+
+CREATE_PROJ="$PLUGIN_DIR/scripts/project-create.sh"
+JOIN="$PLUGIN_DIR/scripts/project-join.sh"
+
+BRIDGE_DIR="$SH_BRIDGE" bash "$CREATE_PROJ" "stop-test" >/dev/null
+SH_SID_A=$(BRIDGE_DIR="$SH_BRIDGE" PROJECT_DIR="$SH_PROJ_A" bash "$JOIN" "stop-test" --name "sender")
+SH_SID_B=$(BRIDGE_DIR="$SH_BRIDGE" PROJECT_DIR="$SH_PROJ_B" bash "$JOIN" "stop-test" --name "receiver")
+
+# Test S1: --stop-hook with empty inbox exits 0, no output
+OUTPUT=$(BRIDGE_DIR="$SH_BRIDGE" BRIDGE_SESSION_ID="$SH_SID_B" bash "$CHECK_INBOX" --stop-hook 2>/dev/null || true)
+assert_eq "stop-hook empty inbox: no output" "" "$OUTPUT"
+
+# Test S2: --stop-hook with pending message returns decision block
+BRIDGE_DIR="$SH_BRIDGE" BRIDGE_SESSION_ID="$SH_SID_A" bash "$SEND_MSG" "$SH_SID_B" query "Hello from stop test" >/dev/null
+OUTPUT=$(BRIDGE_DIR="$SH_BRIDGE" BRIDGE_SESSION_ID="$SH_SID_B" bash "$CHECK_INBOX" --stop-hook)
+DECISION=$(echo "$OUTPUT" | jq -r '.decision')
+HOOK_NAME=$(echo "$OUTPUT" | jq -r '.hookSpecificOutput.hookEventName')
+CONTEXT=$(echo "$OUTPUT" | jq -r '.hookSpecificOutput.additionalContext')
+assert_eq "stop-hook decision is block" "block" "$DECISION"
+assert_eq "stop-hook hookEventName is Stop" "Stop" "$HOOK_NAME"
+assert_contains "stop-hook context has message" "Hello from stop test" "$CONTEXT"
+assert_contains "stop-hook context has BRIDGE header" "CLAUDE BRIDGE" "$CONTEXT"
+
+# Test S3: Counter increments on block
+COUNTER_FILE="$SH_BRIDGE/.stop_counter_${SH_SID_B}"
+COUNTER_VAL=$(cat "$COUNTER_FILE" 2>/dev/null || echo "0")
+assert_eq "stop-hook counter is 1 after first block" "1" "$COUNTER_VAL"
+
+# Test S4: Counter resets on empty inbox (no messages)
+echo "5" > "$COUNTER_FILE"
+OUTPUT=$(BRIDGE_DIR="$SH_BRIDGE" BRIDGE_SESSION_ID="$SH_SID_B" bash "$CHECK_INBOX" --stop-hook 2>/dev/null || true)
+assert_eq "stop-hook empty inbox: no output after counter was 5" "" "$OUTPUT"
+COUNTER_VAL=$(cat "$COUNTER_FILE" 2>/dev/null || echo "99")
+assert_eq "stop-hook counter reset to 0 on allow" "0" "$COUNTER_VAL"
+
+# Test S5: Counter caps at 10 — allows stop even with messages
+echo "10" > "$COUNTER_FILE"
+BRIDGE_DIR="$SH_BRIDGE" BRIDGE_SESSION_ID="$SH_SID_A" bash "$SEND_MSG" "$SH_SID_B" query "Should be skipped" >/dev/null
+OUTPUT=$(BRIDGE_DIR="$SH_BRIDGE" BRIDGE_SESSION_ID="$SH_SID_B" bash "$CHECK_INBOX" --stop-hook 2>/dev/null || true)
+assert_eq "stop-hook cap: exit 0 with no output at counter=10" "" "$OUTPUT"
+COUNTER_VAL=$(cat "$COUNTER_FILE" 2>/dev/null || echo "99")
+assert_eq "stop-hook cap: counter reset to 0" "0" "$COUNTER_VAL"
+# Message should still be pending (not claimed)
+PENDING_COUNT=$(find "$SH_BRIDGE/projects/stop-test/sessions/$SH_SID_B/inbox" -name "*.json" \
+  -exec jq -r 'select(.status == "pending") | .id' {} \; 2>/dev/null | wc -l)
+assert_eq "stop-hook cap: message still pending" "1" "$PENDING_COUNT"
+# Clean up the pending message for subsequent tests
+BRIDGE_DIR="$SH_BRIDGE" BRIDGE_SESSION_ID="$SH_SID_B" bash "$CHECK_INBOX" >/dev/null
+
+# Test S6: Counter resets on default mode (UserPromptSubmit simulation)
+echo "7" > "$COUNTER_FILE"
+BRIDGE_DIR="$SH_BRIDGE" BRIDGE_SESSION_ID="$SH_SID_B" bash "$CHECK_INBOX" >/dev/null
+COUNTER_VAL=$(cat "$COUNTER_FILE" 2>/dev/null || echo "99")
+assert_eq "counter resets on default mode (UserPromptSubmit)" "0" "$COUNTER_VAL"
+
+# Test S7: Non-bridge session exits 0 silently
+OUTPUT=$(bash "$CHECK_INBOX" --stop-hook 2>/dev/null || true)
+assert_eq "stop-hook non-bridge: no output" "" "$OUTPUT"
+
+# Test S8: Multiple messages drained sequentially
+BRIDGE_DIR="$SH_BRIDGE" BRIDGE_SESSION_ID="$SH_SID_A" bash "$SEND_MSG" "$SH_SID_B" query "Msg Alpha" >/dev/null
+BRIDGE_DIR="$SH_BRIDGE" BRIDGE_SESSION_ID="$SH_SID_A" bash "$SEND_MSG" "$SH_SID_B" query "Msg Beta" >/dev/null
+BRIDGE_DIR="$SH_BRIDGE" BRIDGE_SESSION_ID="$SH_SID_A" bash "$SEND_MSG" "$SH_SID_B" query "Msg Gamma" >/dev/null
+
+# First call: claims all 3 messages in one scan
+OUT1=$(BRIDGE_DIR="$SH_BRIDGE" BRIDGE_SESSION_ID="$SH_SID_B" bash "$CHECK_INBOX" --stop-hook)
+D1=$(echo "$OUT1" | jq -r '.decision')
+REASON1=$(echo "$OUT1" | jq -r '.reason')
+CTX1=$(echo "$OUT1" | jq -r '.hookSpecificOutput.additionalContext')
+assert_eq "drain call 1: decision block" "block" "$D1"
+assert_contains "drain call 1: reason says 3" "3 bridge" "$REASON1"
+assert_contains "drain call 1: has Msg Alpha" "Msg Alpha" "$CTX1"
+assert_contains "drain call 1: has Msg Beta" "Msg Beta" "$CTX1"
+assert_contains "drain call 1: has Msg Gamma" "Msg Gamma" "$CTX1"
+
+# Second call: inbox empty now, should allow stop
+OUT2=$(BRIDGE_DIR="$SH_BRIDGE" BRIDGE_SESSION_ID="$SH_SID_B" bash "$CHECK_INBOX" --stop-hook 2>/dev/null || true)
+assert_eq "drain call 2: no output (inbox empty)" "" "$OUT2"
+
+rm -rf "$SH_TMPDIR"
+
 print_results

@@ -5,7 +5,7 @@
   </p>
   <p align="center">
     <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue.svg" alt="MIT License"></a>
-    <img src="https://img.shields.io/badge/tests-300%20passing-brightgreen" alt="Tests">
+    <img src="https://img.shields.io/badge/tests-350%20passing-brightgreen" alt="Tests">
     <img src="https://img.shields.io/badge/version-0.2.0-blue" alt="Version 0.2.0">
   </p>
   <p align="center">
@@ -237,6 +237,7 @@ Legacy commands: `/bridge start`, `/bridge connect <id>`, `/bridge ask <question
 
 ### Communication
 
+- **At turn boundaries**: `Stop` hook checks inbox when Claude finishes responding. If messages are queued, they're injected immediately and Claude keeps processing — draining multiple messages in a burst without relaunching the listener. Safety cap at 10 consecutive blocks.
 - **During active work**: `PostToolUse` hook checks inbox every 5 seconds (rate-limited). `UserPromptSubmit` hook checks immediately when you press Enter.
 - **During idle**: `bridge-listen.sh` blocks on `inotifywait` (Linux) or `fswatch` (macOS) — zero CPU, instant wakeup when a message arrives.
 - **Messages**: JSON files in each session's inbox directory. Atomic writes (temp file + `mv`). Protocol version 2.0.
@@ -305,7 +306,7 @@ A `SessionStart` hook reads this file and auto-joins on every subsequent `claude
 
 ```bash
 cd plugins/session-bridge && bash test.sh
-# 300 passed, 0 failed (20 test files)
+# 350 passed, 0 failed (22 test files)
 ```
 
 <details>
@@ -328,7 +329,7 @@ plugins/session-bridge/
     get-session-id.sh              heartbeat.sh
     register.sh                    connect-peer.sh
   test.sh
-  tests/ (20 test files, 300 tests)
+  tests/ (22 test files, 350 tests)
 ```
 
 </details>

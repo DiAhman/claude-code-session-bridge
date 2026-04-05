@@ -8,7 +8,7 @@ Fork of `PatilShreyas/claude-code-session-bridge` — peer-to-peer communication
 plugins/session-bridge/
   .claude-plugin/plugin.json     # Plugin manifest (currently v0.1.1)
   commands/bridge.md             # /bridge command definition
-  hooks/hooks.json               # UserPromptSubmit, SessionEnd, PreCompact hooks
+  hooks/hooks.json               # SessionStart, UserPromptSubmit, PostToolUse, PreCompact, Stop, SessionEnd hooks
   skills/bridge-awareness/SKILL.md  # Agent behavior skill
   scripts/                       # Core bash scripts (10 scripts, ~584 lines)
   tests/                         # Test suite (11 test files, ~1175 lines, 132 tests)
