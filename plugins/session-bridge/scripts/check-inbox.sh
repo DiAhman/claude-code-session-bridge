@@ -110,6 +110,9 @@ NOW=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
 if [ "$SUMMARY_ONLY" = true ]; then
   SESSION_INFO=""
 
+  NOW_EPOCH=$(date +%s)
+  STALE_THRESHOLD=3600  # 1 hour
+
   if [ -n "$MY_PROJECT_ID" ]; then
     # Project-scoped: include project context, conversations, peers
     for MANIFEST in "$SESSIONS_DIR"/*/manifest.json; do
@@ -117,6 +120,14 @@ if [ "$SUMMARY_ONLY" = true ]; then
       SID=$(jq -r '.sessionId' "$MANIFEST")
       SNAME=$(jq -r '.projectName' "$MANIFEST")
       SROLE=$(jq -r '.role // "unknown"' "$MANIFEST")
+      # Check heartbeat freshness — skip sessions stale for over 1 hour
+      LAST_HB=$(jq -r '.lastHeartbeat // ""' "$MANIFEST")
+      if [ -n "$LAST_HB" ] && [ "$LAST_HB" != "null" ]; then
+        HB_EPOCH=$(date -d "$LAST_HB" +%s 2>/dev/null || date -j -f "%Y-%m-%dT%H:%M:%SZ" "$LAST_HB" +%s 2>/dev/null || echo 0)
+        if [ $((NOW_EPOCH - HB_EPOCH)) -gt "$STALE_THRESHOLD" ]; then
+          continue  # Skip stale session
+        fi
+      fi
       SSTATUS=$(jq -r '.status // "unknown"' "$MANIFEST")
       SESSION_INFO="${SESSION_INFO}\n- ${SNAME} (${SID}) [${SROLE}, ${SSTATUS}]"
     done
@@ -220,12 +231,11 @@ if [ -n "$MY_PROJECT_ID" ]; then
       ALL_MESSAGES="${ALL_MESSAGES}\nTo respond: BRIDGE_SESSION_ID=${TO_ID} bash \"\${CLAUDE_PLUGIN_ROOT}/scripts/send-message.sh\" ${FROM_ID} response \"Your answer\" --reply-to ${MSG_ID} --conversation ${CONV_ID}"
       ALL_MESSAGES="${ALL_MESSAGES}\n"
 
-      # Mark as read and restore to original filename
-      TMP=$(mktemp "$INBOX/${MSG_ID}.XXXXXX")
-      jq '.status = "read"' "$CLAIMED_FILE" > "$TMP" && mv "$TMP" "$MSG_FILE" && rm -f "$CLAIMED_FILE" || {
-        # On failure, restore the original file so the message isn't lost
+      # Delete claimed message — it's been read and formatted into output.
+      # No need to keep read messages; they bloat the inbox over time.
+      rm -f "$CLAIMED_FILE" 2>/dev/null || {
+        # On failure, restore so the message isn't silently lost
         mv "$CLAIMED_FILE" "$MSG_FILE" 2>/dev/null || true
-        rm -f "$TMP" 2>/dev/null || true
       }
 
       TOTAL_COUNT=$((TOTAL_COUNT + 1))
@@ -281,11 +291,9 @@ else
       ALL_MESSAGES="${ALL_MESSAGES}\nTo respond: BRIDGE_SESSION_ID=${TO_ID} bash \"\${CLAUDE_PLUGIN_ROOT}/scripts/send-message.sh\" ${FROM_ID} response \"Your answer\" ${MSG_ID}"
       ALL_MESSAGES="${ALL_MESSAGES}\n"
 
-      # Mark as read and restore
-      TMP=$(mktemp "$INBOX/${MSG_ID}.XXXXXX")
-      jq '.status = "read"' "$CLAIMED_FILE" > "$TMP" && mv "$TMP" "$MSG_FILE" && rm -f "$CLAIMED_FILE" || {
+      # Delete claimed message after reading
+      rm -f "$CLAIMED_FILE" 2>/dev/null || {
         mv "$CLAIMED_FILE" "$MSG_FILE" 2>/dev/null || true
-        rm -f "$TMP" 2>/dev/null || true
       }
 
       TOTAL_COUNT=$((TOTAL_COUNT + 1))

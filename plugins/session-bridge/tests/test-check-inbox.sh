@@ -61,12 +61,15 @@ assert_contains "has peer project name" "project-a" "$SYSTEM_MSG"
 assert_contains "has message content" "What APIs do you expose?" "$SYSTEM_MSG"
 assert_contains "has send-message instruction" "send-message.sh" "$SYSTEM_MSG"
 
-# --- Test 3: Message marked as read after check ---
+# --- Test 3: Message deleted from inbox after check ---
 echo ""
-echo "Test 3: Message marked as read after check"
+echo "Test 3: Message deleted from inbox after check"
 MSG_FILE="$BRIDGE_DIR/sessions/$TARGET_ID/inbox/$MSG_ID.json"
-MSG_STATUS=$(jq -r '.status' "$MSG_FILE")
-assert_eq "message status is read" "read" "$MSG_STATUS"
+if [ -f "$MSG_FILE" ]; then
+  echo "  FAIL: message still exists in inbox"; FAIL=$((FAIL + 1))
+else
+  echo "  PASS: message deleted after read"; PASS=$((PASS + 1))
+fi
 
 # --- Test 4: Heartbeat updated ---
 echo ""

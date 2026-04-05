@@ -97,9 +97,9 @@ assert_contains "Y sees X's query" "new API return" "$OUT_Y"
 OUT_X=$(BRIDGE_DIR="$BRIDGE_DIR" bash "$LISTEN" "$SID_X" 5)
 assert_contains "X sees Y's query" "frontend components" "$OUT_X"
 
-# Both respond
-Q1_CONV=$(jq -r '.conversationId' "$BRIDGE_DIR/projects/bidir-test/sessions/$SID_Y/inbox/$Q1_ID.json")
-Q2_CONV=$(jq -r '.conversationId' "$BRIDGE_DIR/projects/bidir-test/sessions/$SID_X/inbox/$Q2_ID.json")
+# Both respond — get conversationId from outbox (inbox messages are deleted after read)
+Q1_CONV=$(jq -r '.conversationId' "$BRIDGE_DIR/projects/bidir-test/sessions/$SID_X/outbox/$Q1_ID.json")
+Q2_CONV=$(jq -r '.conversationId' "$BRIDGE_DIR/projects/bidir-test/sessions/$SID_Y/outbox/$Q2_ID.json")
 
 BRIDGE_DIR="$BRIDGE_DIR" BRIDGE_SESSION_ID="$SID_Y" bash "$SEND_MSG" "$SID_X" response "Returns JSON with userId field" --conversation "$Q1_CONV" --reply-to "$Q1_ID" > /dev/null
 BRIDGE_DIR="$BRIDGE_DIR" BRIDGE_SESSION_ID="$SID_X" bash "$SEND_MSG" "$SID_Y" response "UserCard and ProfilePage use it" --conversation "$Q2_CONV" --reply-to "$Q2_ID" > /dev/null

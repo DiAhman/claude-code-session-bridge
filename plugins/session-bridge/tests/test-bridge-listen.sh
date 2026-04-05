@@ -39,19 +39,19 @@ else
   echo "  FAIL: missing separator"; FAIL=$((FAIL + 1))
 fi
 
-# --- Test 2: Message marked as read ---
+# --- Test 2: Message deleted after pickup ---
 echo ""
-echo "Test 2: Message marked as read after pickup"
-MSG_FILE=$(find "$BRIDGE_DIR/sessions/$SESSION_B/inbox" -name "*.json" | head -1)
-assert_eq "message status is read" "read" "$(jq -r '.status' "$MSG_FILE")"
+echo "Test 2: Message deleted from inbox after pickup"
+MSG_COUNT=$(find "$BRIDGE_DIR/sessions/$SESSION_B/inbox" -name "*.json" 2>/dev/null | wc -l)
+assert_eq "inbox empty after pickup" "0" "$MSG_COUNT"
 
-# --- Test 3: Already-read messages are not re-delivered ---
+# --- Test 3: No messages to re-deliver ---
 echo ""
-echo "Test 3: Already-read messages are ignored"
+echo "Test 3: No messages to re-deliver (inbox is empty)"
 if BRIDGE_DIR="$BRIDGE_DIR" bash "$LISTEN" "$SESSION_B" 3 > /dev/null 2>&1; then
-  echo "  FAIL: re-delivered an already-read message"; FAIL=$((FAIL + 1))
+  echo "  FAIL: re-delivered a deleted message"; FAIL=$((FAIL + 1))
 else
-  echo "  PASS: already-read message not returned again"; PASS=$((PASS + 1))
+  echo "  PASS: no message returned from empty inbox"; PASS=$((PASS + 1))
 fi
 
 # --- Test 4: Times out with exit code 1 when inbox is empty ---

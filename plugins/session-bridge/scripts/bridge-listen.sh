@@ -144,11 +144,9 @@ while true; do
       continue
     fi
 
-    # Mark as read and restore to original filename
-    TMP=$(mktemp "$INBOX/${MSG_ID}.XXXXXX")
-    jq '.status = "read"' "$CLAIMED_FILE" > "$TMP" && mv "$TMP" "$MSG_FILE" && rm -f "$CLAIMED_FILE" || {
+    # Delete claimed message after reading — no need to keep read messages
+    rm -f "$CLAIMED_FILE" 2>/dev/null || {
       mv "$CLAIMED_FILE" "$MSG_FILE" 2>/dev/null || true
-      rm -f "$TMP" 2>/dev/null || true
     }
 
     _log "MESSAGE id=$MSG_ID type=$MSG_TYPE from=$FROM_ID ($FROM_PROJECT)"
