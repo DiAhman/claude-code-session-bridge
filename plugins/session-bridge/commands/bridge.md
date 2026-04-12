@@ -169,23 +169,23 @@ The loop:
    ```
    After launching the background listener, output a brief status message (e.g., "Listening in background...") and **end your turn**. Do NOT call any more tools or keep the turn open. You will be automatically notified when the listener completes (message received).
 3. When the background listener completes and you receive the notification, parse the output:
-   - Lines before `---` are metadata (MESSAGE_ID, FROM_ID, TO_ID, FROM_PROJECT, TYPE, IN_REPLY_TO)
+   - Lines before `---` are metadata (MESSAGE_ID, FROM_ID, TO_ID, FROM_PROJECT, TYPE, IN_REPLY_TO, CONV_ID)
    - Lines after `---` are the message content
 
 4. Handle by message type. **Use `TO_ID` from the message metadata as your session ID** when sending responses. This is always correct regardless of working directory.
 
    **If TYPE=query**: Read the question. Formulate a helpful, concise answer using your full knowledge of this project. Send it:
    ```bash
-   BRIDGE_SESSION_ID=<TO_ID> bash "${CLAUDE_PLUGIN_ROOT}/scripts/send-message.sh" <FROM_ID> response "Your answer here" <MESSAGE_ID>
+   BRIDGE_SESSION_ID=<TO_ID> bash "${CLAUDE_PLUGIN_ROOT}/scripts/send-message.sh" <FROM_ID> response "Your answer here" --reply-to <MESSAGE_ID> --conversation <CONV_ID>
    ```
 
    **If TYPE=task-assign**: Read the task description. Acknowledge receipt, then begin working on the task. Send a progress update:
    ```bash
-   BRIDGE_SESSION_ID=<TO_ID> bash "${CLAUDE_PLUGIN_ROOT}/scripts/send-message.sh" <FROM_ID> task-update "Acknowledged. Starting work on: <brief summary>" <MESSAGE_ID>
+   BRIDGE_SESSION_ID=<TO_ID> bash "${CLAUDE_PLUGIN_ROOT}/scripts/send-message.sh" <FROM_ID> task-update "Acknowledged. Starting work on: <brief summary>" --reply-to <MESSAGE_ID> --conversation <CONV_ID>
    ```
    Then do the work. When finished, send task-complete:
    ```bash
-   BRIDGE_SESSION_ID=<TO_ID> bash "${CLAUDE_PLUGIN_ROOT}/scripts/send-message.sh" <FROM_ID> task-complete "Done. <summary of what was done>" <MESSAGE_ID>
+   BRIDGE_SESSION_ID=<TO_ID> bash "${CLAUDE_PLUGIN_ROOT}/scripts/send-message.sh" <FROM_ID> task-complete "Done. <summary of what was done>" --reply-to <MESSAGE_ID> --conversation <CONV_ID>
    ```
 
    **If TYPE=escalate**: Another specialist is routing work to you. Handle like task-assign but note the escalation context. Work on the issue and send task-complete when done.
@@ -202,7 +202,7 @@ The loop:
 
    **If TYPE=human-input-needed**: Display the question to the user prominently. Show the proposed default if provided. Ask the user for their decision. When they respond, send it back:
    ```bash
-   BRIDGE_SESSION_ID=<TO_ID> bash "${CLAUDE_PLUGIN_ROOT}/scripts/send-message.sh" <FROM_ID> human-response "User's decision here" <MESSAGE_ID>
+   BRIDGE_SESSION_ID=<TO_ID> bash "${CLAUDE_PLUGIN_ROOT}/scripts/send-message.sh" <FROM_ID> human-response "User's decision here" --reply-to <MESSAGE_ID> --conversation <CONV_ID>
    ```
    **Then immediately go back to the listen loop** — do NOT stop after handling a human-input-needed message.
 

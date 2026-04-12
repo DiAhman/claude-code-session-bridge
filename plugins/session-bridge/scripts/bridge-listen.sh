@@ -112,6 +112,8 @@ else
   WATCHER="poll"
 fi
 
+INOTIFY_PID=""
+FSWATCH_PID=""
 ELAPSED=0
 INTERVAL=3
 
@@ -150,6 +152,7 @@ while true; do
     CONTENT=$(jq -r '.content' "$CLAIMED_FILE")
     FROM_PROJECT=$(jq -r '.metadata.fromProject // "unknown"' "$CLAIMED_FILE")
     IN_REPLY_TO=$(jq -r '.inReplyTo // ""' "$CLAIMED_FILE")
+    CONV_ID=$(jq -r '.conversationId // ""' "$CLAIMED_FILE")
 
     # Skip messages FROM ourselves (echo prevention) — restore file if skipping
     if [ "$FROM_ID" = "$SESSION_ID" ]; then
@@ -166,6 +169,7 @@ while true; do
     echo "FROM_PROJECT=$FROM_PROJECT"
     echo "TYPE=$MSG_TYPE"
     echo "IN_REPLY_TO=$IN_REPLY_TO"
+    echo "CONV_ID=$CONV_ID"
     echo "---"
     echo "$CONTENT"
     # Delete AFTER output to prevent message loss on process death
@@ -222,10 +226,24 @@ while true; do
       timeout "$REMAINING" fswatch --one-event "$INBOX" >/dev/null 2>&1 9>&- &
       FSWATCH_PID=$!
       echo "$FSWATCH_PID" > "$WATCHER_CHILD_FILE"
-      wait "$FSWATCH_PID" 2>/dev/null || true
+      WATCH_RC=0
+      wait "$FSWATCH_PID" 2>/dev/null || WATCH_RC=$?
       rm -f "$WATCHER_CHILD_FILE" 2>/dev/null
       END_WAIT=$(date +%s)
-      ELAPSED=$((ELAPSED + END_WAIT - START_WAIT))
+      WAIT_DURATION=$((END_WAIT - START_WAIT))
+      if [ "$WATCH_RC" -ne 0 ] && [ "$WAIT_DURATION" -lt 2 ]; then
+        # fswatch crashed immediately — back off to prevent CPU spin
+        _log "ERROR fswatch rc=$WATCH_RC duration=${WAIT_DURATION}s"
+        if [ ! -d "$INBOX" ]; then
+          _log "FATAL inbox directory gone"
+          echo "Error: Inbox directory $INBOX no longer exists." >&2
+          exit 1
+        fi
+        sleep "$INTERVAL"
+        ELAPSED=$((ELAPSED + INTERVAL))
+      else
+        ELAPSED=$((ELAPSED + WAIT_DURATION))
+      fi
       ;;
     poll)
       sleep "$INTERVAL"

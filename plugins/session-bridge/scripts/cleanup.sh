@@ -182,6 +182,11 @@ if [ -n "$STALE_CUTOFF" ] && is_valid_timestamp "$STALE_CUTOFF"; then
     STALE_HB=$(jq -r '.lastHeartbeat // ""' "$STALE_MANIFEST" 2>/dev/null || echo "")
     # Only compare if heartbeat is a valid timestamp (prevents "null" < "2026-..." deletion)
     if is_valid_timestamp "$STALE_HB" && [[ "$STALE_HB" < "$STALE_CUTOFF" ]]; then
+      # Warn about unread messages before deleting
+      if [ -d "$STALE_DIR/inbox" ]; then
+        SP=$(grep -rl '"status":[[:space:]]*"pending"' "$STALE_DIR/inbox/"*.json 2>/dev/null | wc -l | tr -d '[:space:]') || true
+        [ "${SP:-0}" -gt 0 ] && echo "Warning: Pruning stale session $(basename "$STALE_DIR") with $SP unread message(s)" >&2
+      fi
       rm -rf "$STALE_DIR"
     fi
   done
@@ -193,6 +198,11 @@ if [ -n "$STALE_CUTOFF" ] && is_valid_timestamp "$STALE_CUTOFF"; then
     STALE_SID=$(jq -r '.sessionId // ""' "$STALE_MANIFEST" 2>/dev/null || echo "")
     STALE_HB=$(jq -r '.lastHeartbeat // ""' "$STALE_MANIFEST" 2>/dev/null || echo "")
     if is_valid_timestamp "$STALE_HB" && [[ "$STALE_HB" < "$STALE_CUTOFF" ]]; then
+      # Warn about unread messages before deleting
+      if [ -d "$STALE_DIR/inbox" ]; then
+        SP=$(grep -rl '"status":[[:space:]]*"pending"' "$STALE_DIR/inbox/"*.json 2>/dev/null | wc -l | tr -d '[:space:]') || true
+        [ "${SP:-0}" -gt 0 ] && echo "Warning: Pruning stale session $STALE_SID with $SP unread message(s)" >&2
+      fi
       rm -rf "$STALE_DIR"
       # Clean up per-session dotfiles
       rm -f "$BRIDGE_DIR/.stop_counter_${STALE_SID}" "$BRIDGE_DIR/.last_inbox_check_${STALE_SID}" 2>/dev/null || true

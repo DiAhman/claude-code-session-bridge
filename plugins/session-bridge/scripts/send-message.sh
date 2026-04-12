@@ -36,7 +36,7 @@ while [ $# -gt 0 ]; do
     --conversation) CONVERSATION_ID="$2"; shift 2 ;;
     --urgency) URGENCY="$2"; shift 2 ;;
     --reply-to) IN_REPLY_TO="$2"; shift 2 ;;
-    *) shift ;;
+    *) echo "Warning: unknown flag '$1' ignored" >&2; shift ;;
   esac
 done
 
@@ -188,7 +188,7 @@ if [ -d "$SENDER_OUTBOX" ]; then
   OUTBOX_JSON=$(echo "$MSG_JSON" | jq '.status = "sent"')
   TMP_FILE=$(mktemp "$SENDER_OUTBOX/$MSG_ID.XXXXXX")
   echo "$OUTBOX_JSON" > "$TMP_FILE"
-  mv "$TMP_FILE" "$SENDER_OUTBOX/$MSG_ID.json" || rm -f "$TMP_FILE"
+  mv "$TMP_FILE" "$SENDER_OUTBOX/$MSG_ID.json" || { echo "Warning: outbox write failed for $MSG_ID" >&2; rm -f "$TMP_FILE"; }
 fi
 
 echo -n "$MSG_ID"

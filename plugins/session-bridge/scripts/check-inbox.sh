@@ -19,6 +19,16 @@ esac
 
 BRIDGE_DIR="${BRIDGE_DIR:-$HOME/.claude/session-bridge}"
 
+# Restore claimed files on output failure — prevents message loss when jq crashes
+_restore_claimed_files() {
+  for F in $FILES_TO_DELETE; do
+    [ -f "$F" ] || continue
+    ORIG_NAME=$(basename "$F" | sed 's/^\.claimed_//')
+    INBOX_DIR=$(dirname "$F")
+    mv "$F" "$INBOX_DIR/$ORIG_NAME" 2>/dev/null || true
+  done
+}
+
 # --- 2. Early exit for non-bridge sessions ---
 # If neither BRIDGE_SESSION_ID env nor .claude/bridge-session file exists, this
 # session has no bridge registration. Exit immediately with zero cost.
@@ -127,6 +137,10 @@ if [ "$SUMMARY_ONLY" = true ]; then
       LAST_HB=$(jq -r '.lastHeartbeat // ""' "$MANIFEST")
       if [ -n "$LAST_HB" ] && [ "$LAST_HB" != "null" ]; then
         HB_EPOCH=$(date -u -jf "%Y-%m-%dT%H:%M:%SZ" "$LAST_HB" +%s 2>/dev/null || date -u -d "$LAST_HB" +%s 2>/dev/null || echo 0)
+        # Reject invalid epochs (before 2020-01-01) — prevents malformed timestamps from hiding sessions
+        if [ "$HB_EPOCH" -lt 1577836800 ]; then
+          continue  # Invalid epoch — skip session
+        fi
         if [ $((NOW_EPOCH - HB_EPOCH)) -gt "$STALE_THRESHOLD" ]; then
           continue  # Skip stale session
         fi
@@ -334,16 +348,23 @@ SYSTEM_MSG="=== CLAUDE BRIDGE: ${TOTAL_COUNT} pending message(s) ===\nYou MUST r
 # --- Stop hook output: block stop and inject messages as additionalContext ---
 if [ "$STOP_HOOK" = true ]; then
   STOP_COUNTER=$((STOP_COUNTER + 1))
-  echo "$STOP_COUNTER" > "$STOP_COUNTER_FILE"
-  jq -n --arg reason "${TOTAL_COUNT} bridge message(s) pending" \
+  if jq -n --arg reason "${TOTAL_COUNT} bridge message(s) pending" \
         --arg ctx "$SYSTEM_MSG" \
-    '{decision: "block", reason: $reason, hookSpecificOutput: {hookEventName: "Stop", additionalContext: $ctx}}'
-  # Delete claimed files AFTER output is written (prevents message loss on process death)
-  for F in $FILES_TO_DELETE; do rm -f "$F" 2>/dev/null || true; done
+    '{decision: "block", reason: $reason, hookSpecificOutput: {hookEventName: "Stop", additionalContext: $ctx}}'; then
+    # Output succeeded — commit counter and delete claimed files
+    [ -n "${STOP_COUNTER_FILE:-}" ] && echo "$STOP_COUNTER" > "$STOP_COUNTER_FILE"
+    for F in $FILES_TO_DELETE; do rm -f "$F" 2>/dev/null || true; done
+  else
+    # jq failed — restore claimed files so they can be re-delivered
+    _restore_claimed_files
+  fi
   exit 0
 fi
 
-jq -n --arg msg "$SYSTEM_MSG" '{continue: true, suppressOutput: false, systemMessage: $msg}'
-
-# Delete claimed files AFTER output is written (prevents message loss on process death)
-for F in $FILES_TO_DELETE; do rm -f "$F" 2>/dev/null || true; done
+if jq -n --arg msg "$SYSTEM_MSG" '{continue: true, suppressOutput: false, systemMessage: $msg}'; then
+  # Output succeeded — delete claimed files
+  for F in $FILES_TO_DELETE; do rm -f "$F" 2>/dev/null || true; done
+else
+  # jq failed — restore claimed files so they can be re-delivered
+  _restore_claimed_files
+fi
