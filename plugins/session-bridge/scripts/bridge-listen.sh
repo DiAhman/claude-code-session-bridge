@@ -26,8 +26,8 @@ _log_rotate() {
 }
 
 # Get session ID: from argument, or from get-session-id.sh
-if [ -n "${1:-}" ] && [ "${1:-}" != "0" ] && ! echo "$1" | grep -qE '^[0-9]+$'; then
-  # First arg looks like a session ID (not a number/timeout)
+if [ -n "${1:-}" ] && [ "${1:-}" != "0" ] && [ ${#1} -eq 6 ]; then
+  # First arg is 6 chars — treat as session ID (session IDs are always 6 chars)
   SESSION_ID="$1"
   TIMEOUT="${2:-0}"
 else

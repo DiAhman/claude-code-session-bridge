@@ -9,6 +9,8 @@ set -euo pipefail
 RATE_LIMITED=false
 SUMMARY_ONLY=false
 STOP_HOOK=false
+STOP_COUNTER=0
+STOP_COUNTER_FILE=""
 case "${1:-}" in
   --rate-limited) RATE_LIMITED=true ;;
   --summary-only) SUMMARY_ONLY=true ;;
@@ -96,6 +98,7 @@ fi
 if [ "$STOP_HOOK" = true ] && [ -n "$MY_SESSION_ID" ]; then
   STOP_COUNTER_FILE="$BRIDGE_DIR/.stop_counter_${MY_SESSION_ID}"
   STOP_COUNTER=$(cat "$STOP_COUNTER_FILE" 2>/dev/null || echo 0)
+  [[ "$STOP_COUNTER" =~ ^[0-9]+$ ]] || STOP_COUNTER=0  # Validate integer (empty/corrupt → 0)
   if [ "$STOP_COUNTER" -ge 10 ]; then
     # Safety cap reached — allow stop, reset counter. Messages stay pending
     # and will be picked up by PostToolUse or UserPromptSubmit hooks.
@@ -123,7 +126,7 @@ if [ "$SUMMARY_ONLY" = true ]; then
       # Check heartbeat freshness — skip sessions stale for over 1 hour
       LAST_HB=$(jq -r '.lastHeartbeat // ""' "$MANIFEST")
       if [ -n "$LAST_HB" ] && [ "$LAST_HB" != "null" ]; then
-        HB_EPOCH=$(date -d "$LAST_HB" +%s 2>/dev/null || date -j -f "%Y-%m-%dT%H:%M:%SZ" "$LAST_HB" +%s 2>/dev/null || echo 0)
+        HB_EPOCH=$(date -u -jf "%Y-%m-%dT%H:%M:%SZ" "$LAST_HB" +%s 2>/dev/null || date -u -d "$LAST_HB" +%s 2>/dev/null || echo 0)
         if [ $((NOW_EPOCH - HB_EPOCH)) -gt "$STALE_THRESHOLD" ]; then
           continue  # Skip stale session
         fi
@@ -250,11 +253,27 @@ else
     [ -d "$INBOX" ] || continue
 
     SESSION_ID=$(basename "$SESSION_DIR")
+
+    # Only scan our own inbox in legacy mode
+    if [ -n "$MY_SESSION_ID" ] && [ "$SESSION_ID" != "$MY_SESSION_ID" ]; then
+      continue
+    fi
+
     SESSION_NAME="unknown"
     MANIFEST="$SESSION_DIR/manifest.json"
     if [ -f "$MANIFEST" ]; then
       SESSION_NAME=$(jq -r '.projectName // "unknown"' "$MANIFEST")
     fi
+
+    # Recover orphaned .claimed_ files older than 30 seconds
+    CLAIM_NOW=$(date +%s)
+    for CLAIMED in "$INBOX"/.claimed_*.json; do
+      [ -f "$CLAIMED" ] || continue
+      CLAIM_MTIME=$(stat -c %Y "$CLAIMED" 2>/dev/null || stat -f %m "$CLAIMED" 2>/dev/null || echo "$CLAIM_NOW")
+      [ $((CLAIM_NOW - CLAIM_MTIME)) -lt 30 ] && continue
+      ORIG_NAME=$(basename "$CLAIMED" | sed 's/^\.claimed_//')
+      mv "$CLAIMED" "$INBOX/$ORIG_NAME" 2>/dev/null || true
+    done
 
     for MSG_FILE in "$INBOX"/*.json; do
       [ -f "$MSG_FILE" ] || continue

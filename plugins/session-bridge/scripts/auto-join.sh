@@ -34,11 +34,15 @@ fi
 
 # Rejoin — project-join.sh reads role/specialty/name from bridge-role automatically
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-SESSION_ID=$(BRIDGE_DIR="$BRIDGE_DIR" PROJECT_DIR="$PROJECT_DIR" bash "$SCRIPT_DIR/project-join.sh" "$PROJECT_NAME" 2>/dev/null) || {
-  ERRMSG="=== BRIDGE AUTO-JOIN FAILED ===\nCould not rejoin project '${PROJECT_NAME}'.\nRun: /bridge project join ${PROJECT_NAME}\n=== END BRIDGE ==="
+JOIN_ERR_FILE=$(mktemp /tmp/bridge-join-err.XXXXXX 2>/dev/null || echo "/tmp/bridge-join-err.$$")
+SESSION_ID=$(BRIDGE_DIR="$BRIDGE_DIR" PROJECT_DIR="$PROJECT_DIR" bash "$SCRIPT_DIR/project-join.sh" "$PROJECT_NAME" 2>"$JOIN_ERR_FILE") || {
+  DETAIL=$(head -3 "$JOIN_ERR_FILE" 2>/dev/null || echo "unknown error")
+  rm -f "$JOIN_ERR_FILE" 2>/dev/null
+  ERRMSG="=== BRIDGE AUTO-JOIN FAILED ===\nCould not rejoin project '${PROJECT_NAME}'.\nDetail: ${DETAIL}\nRun: /bridge project join ${PROJECT_NAME}\n=== END BRIDGE ==="
   jq -n --arg msg "$ERRMSG" '{continue: true, suppressOutput: false, systemMessage: $msg}'
   exit 0
 }
+rm -f "$JOIN_ERR_FILE" 2>/dev/null
 
 # Read back the manifest for the status message
 ROLE=$(jq -r '.role // "specialist"' "$BRIDGE_ROLE_FILE")

@@ -181,14 +181,14 @@ MSG_JSON=$(jq -n \
 # Atomic write to target inbox
 TMP_FILE=$(mktemp "$TARGET_INBOX/$MSG_ID.XXXXXX")
 echo "$MSG_JSON" > "$TMP_FILE"
-mv "$TMP_FILE" "$TARGET_INBOX/$MSG_ID.json"
+mv "$TMP_FILE" "$TARGET_INBOX/$MSG_ID.json" || { rm -f "$TMP_FILE"; exit 1; }
 
 # Copy to sender outbox (audit log) with status=sent
 if [ -d "$SENDER_OUTBOX" ]; then
   OUTBOX_JSON=$(echo "$MSG_JSON" | jq '.status = "sent"')
   TMP_FILE=$(mktemp "$SENDER_OUTBOX/$MSG_ID.XXXXXX")
   echo "$OUTBOX_JSON" > "$TMP_FILE"
-  mv "$TMP_FILE" "$SENDER_OUTBOX/$MSG_ID.json"
+  mv "$TMP_FILE" "$SENDER_OUTBOX/$MSG_ID.json" || rm -f "$TMP_FILE"
 fi
 
 echo -n "$MSG_ID"

@@ -65,8 +65,8 @@ while $RUNNING; do
       # Run in background so SIGTERM trap can kill it
       inotifywait -t 30 -e create "$INBOX" >/dev/null 2>&1 &
       CHILD_PID=$!
-      wait "$CHILD_PID" 2>/dev/null
-      WATCH_RC=$?
+      WATCH_RC=0
+      wait "$CHILD_PID" 2>/dev/null || WATCH_RC=$?
       CHILD_PID=""
       case "$WATCH_RC" in
         0) WATCHER_FAIL_COUNT=0 ;;  # Event detected
