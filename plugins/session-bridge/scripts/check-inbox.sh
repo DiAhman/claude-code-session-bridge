@@ -175,6 +175,7 @@ fi
 # --- 6. Normal mode: scan for pending inbox messages ---
 ALL_MESSAGES=""
 TOTAL_COUNT=0
+FILES_TO_DELETE=""  # Deferred deletion — delete AFTER output to prevent message loss on process death
 
 if [ -n "$MY_PROJECT_ID" ]; then
   # Project-scoped: only scan this session's own inbox
@@ -187,8 +188,12 @@ if [ -n "$MY_PROJECT_ID" ]; then
     fi
 
     # Recover orphaned .claimed_ files from killed processes
+    # Only recover files older than 30 seconds to avoid racing with active processors
+    CLAIM_NOW=$(date +%s)
     for CLAIMED in "$INBOX"/.claimed_*.json; do
       [ -f "$CLAIMED" ] || continue
+      CLAIM_MTIME=$(stat -c %Y "$CLAIMED" 2>/dev/null || stat -f %m "$CLAIMED" 2>/dev/null || echo "$CLAIM_NOW")
+      [ $((CLAIM_NOW - CLAIM_MTIME)) -lt 30 ] && continue  # Skip recent — probably still being processed
       ORIG_NAME=$(basename "$CLAIMED" | sed 's/^\.claimed_//')
       mv "$CLAIMED" "$INBOX/$ORIG_NAME" 2>/dev/null || true
     done
@@ -231,12 +236,8 @@ if [ -n "$MY_PROJECT_ID" ]; then
       ALL_MESSAGES="${ALL_MESSAGES}\nTo respond: BRIDGE_SESSION_ID=${TO_ID} bash \"\${CLAUDE_PLUGIN_ROOT}/scripts/send-message.sh\" ${FROM_ID} response \"Your answer\" --reply-to ${MSG_ID} --conversation ${CONV_ID}"
       ALL_MESSAGES="${ALL_MESSAGES}\n"
 
-      # Delete claimed message — it's been read and formatted into output.
-      # No need to keep read messages; they bloat the inbox over time.
-      rm -f "$CLAIMED_FILE" 2>/dev/null || {
-        # On failure, restore so the message isn't silently lost
-        mv "$CLAIMED_FILE" "$MSG_FILE" 2>/dev/null || true
-      }
+      # Defer deletion — will delete AFTER output is written to stdout
+      FILES_TO_DELETE="${FILES_TO_DELETE} ${CLAIMED_FILE}"
 
       TOTAL_COUNT=$((TOTAL_COUNT + 1))
     done
@@ -291,10 +292,8 @@ else
       ALL_MESSAGES="${ALL_MESSAGES}\nTo respond: BRIDGE_SESSION_ID=${TO_ID} bash \"\${CLAUDE_PLUGIN_ROOT}/scripts/send-message.sh\" ${FROM_ID} response \"Your answer\" ${MSG_ID}"
       ALL_MESSAGES="${ALL_MESSAGES}\n"
 
-      # Delete claimed message after reading
-      rm -f "$CLAIMED_FILE" 2>/dev/null || {
-        mv "$CLAIMED_FILE" "$MSG_FILE" 2>/dev/null || true
-      }
+      # Defer deletion — will delete AFTER output is written
+      FILES_TO_DELETE="${FILES_TO_DELETE} ${CLAIMED_FILE}"
 
       TOTAL_COUNT=$((TOTAL_COUNT + 1))
     done
@@ -320,7 +319,12 @@ if [ "$STOP_HOOK" = true ]; then
   jq -n --arg reason "${TOTAL_COUNT} bridge message(s) pending" \
         --arg ctx "$SYSTEM_MSG" \
     '{decision: "block", reason: $reason, hookSpecificOutput: {hookEventName: "Stop", additionalContext: $ctx}}'
+  # Delete claimed files AFTER output is written (prevents message loss on process death)
+  for F in $FILES_TO_DELETE; do rm -f "$F" 2>/dev/null || true; done
   exit 0
 fi
 
 jq -n --arg msg "$SYSTEM_MSG" '{continue: true, suppressOutput: false, systemMessage: $msg}'
+
+# Delete claimed files AFTER output is written (prevents message loss on process death)
+for F in $FILES_TO_DELETE; do rm -f "$F" 2>/dev/null || true; done

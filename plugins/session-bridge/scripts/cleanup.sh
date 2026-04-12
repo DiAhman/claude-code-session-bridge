@@ -159,6 +159,11 @@ else
   rm -rf "$SESSION_DIR"
 fi
 
+# Clean up per-session dotfiles for the current session
+if [ -n "$SESSION_ID" ]; then
+  rm -f "$BRIDGE_DIR/.stop_counter_${SESSION_ID}" "$BRIDGE_DIR/.last_inbox_check_${SESSION_ID}" 2>/dev/null || true
+fi
+
 # Remove bridge-session pointer
 rm -f "$BRIDGE_SESSION_FILE"
 
@@ -185,9 +190,37 @@ if [ -n "$STALE_CUTOFF" ] && is_valid_timestamp "$STALE_CUTOFF"; then
   for STALE_MANIFEST in "$BRIDGE_DIR"/projects/*/sessions/*/manifest.json; do
     [ -f "$STALE_MANIFEST" ] || continue
     STALE_DIR=$(dirname "$STALE_MANIFEST")
+    STALE_SID=$(jq -r '.sessionId // ""' "$STALE_MANIFEST" 2>/dev/null || echo "")
     STALE_HB=$(jq -r '.lastHeartbeat // ""' "$STALE_MANIFEST" 2>/dev/null || echo "")
     if is_valid_timestamp "$STALE_HB" && [[ "$STALE_HB" < "$STALE_CUTOFF" ]]; then
       rm -rf "$STALE_DIR"
+      # Clean up per-session dotfiles
+      rm -f "$BRIDGE_DIR/.stop_counter_${STALE_SID}" "$BRIDGE_DIR/.last_inbox_check_${STALE_SID}" 2>/dev/null || true
+    fi
+  done
+fi
+
+# --- Prune old outbox messages (older than 24 hours) across all sessions ---
+OUTBOX_CUTOFF=$(date -u -v-24H +"%Y-%m-%dT%H:%M:%SZ" 2>/dev/null || date -u -d "24 hours ago" +"%Y-%m-%dT%H:%M:%SZ" 2>/dev/null || echo "")
+if [ -n "$OUTBOX_CUTOFF" ] && is_valid_timestamp "$OUTBOX_CUTOFF"; then
+  for OUTBOX_FILE in "$BRIDGE_DIR"/projects/*/sessions/*/outbox/msg-*.json "$BRIDGE_DIR"/sessions/*/outbox/msg-*.json; do
+    [ -f "$OUTBOX_FILE" ] || continue
+    MSG_TS=$(jq -r '.timestamp // ""' "$OUTBOX_FILE" 2>/dev/null || echo "")
+    if is_valid_timestamp "$MSG_TS" && [[ "$MSG_TS" < "$OUTBOX_CUTOFF" ]]; then
+      rm -f "$OUTBOX_FILE"
+    fi
+  done
+fi
+
+# --- Prune resolved conversations (older than 24 hours) ---
+if [ -n "$OUTBOX_CUTOFF" ]; then
+  for CONV_FILE in "$BRIDGE_DIR"/projects/*/conversations/conv-*.json; do
+    [ -f "$CONV_FILE" ] || continue
+    CONV_STATUS=$(jq -r '.status // ""' "$CONV_FILE" 2>/dev/null || echo "")
+    [ "$CONV_STATUS" = "resolved" ] || continue
+    RESOLVED_AT=$(jq -r '.resolvedAt // ""' "$CONV_FILE" 2>/dev/null || echo "")
+    if is_valid_timestamp "$RESOLVED_AT" && [[ "$RESOLVED_AT" < "$OUTBOX_CUTOFF" ]]; then
+      rm -f "$CONV_FILE"
     fi
   done
 fi

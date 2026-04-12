@@ -33,17 +33,23 @@ OUTPUT=$(BRIDGE_DIR="$BRIDGE_DIR" bash "$RECEIVE" "$SESSION_A" "$MSG_ID" 5)
 assert_contains "response has content" "Version 2.0" "$OUTPUT"
 assert_contains "response shows from project" "project-b" "$OUTPUT"
 
-# --- Test 2: Response marked as read ---
+# --- Test 2: Response deleted from inbox after pickup ---
 echo ""
-echo "Test 2: Response marked as read after pickup"
+echo "Test 2: Response deleted from inbox after pickup"
+REPLY_FOUND=false
 for F in "$BRIDGE_DIR/sessions/$SESSION_A/inbox"/msg-*.json; do
   [ -f "$F" ] || continue
   IRT=$(jq -r '.inReplyTo // ""' "$F")
   if [ "$IRT" = "$MSG_ID" ]; then
-    assert_eq "response status is read" "read" "$(jq -r '.status' "$F")"
+    REPLY_FOUND=true
     break
   fi
 done
+if [ "$REPLY_FOUND" = false ]; then
+  echo "  PASS: response deleted from inbox after pickup"; PASS=$((PASS + 1))
+else
+  echo "  FAIL: response still in inbox after pickup"; FAIL=$((FAIL + 1))
+fi
 
 # --- Test 3: Times out with exit code 1 ---
 echo ""

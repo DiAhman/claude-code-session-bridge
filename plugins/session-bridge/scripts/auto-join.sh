@@ -34,8 +34,7 @@ fi
 
 # Rejoin — project-join.sh reads role/specialty/name from bridge-role automatically
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-JOIN_ERR=""
-SESSION_ID=$(BRIDGE_DIR="$BRIDGE_DIR" PROJECT_DIR="$PROJECT_DIR" bash "$SCRIPT_DIR/project-join.sh" "$PROJECT_NAME" 2>&1) || {
+SESSION_ID=$(BRIDGE_DIR="$BRIDGE_DIR" PROJECT_DIR="$PROJECT_DIR" bash "$SCRIPT_DIR/project-join.sh" "$PROJECT_NAME" 2>/dev/null) || {
   ERRMSG="=== BRIDGE AUTO-JOIN FAILED ===\nCould not rejoin project '${PROJECT_NAME}'.\nRun: /bridge project join ${PROJECT_NAME}\n=== END BRIDGE ==="
   jq -n --arg msg "$ERRMSG" '{continue: true, suppressOutput: false, systemMessage: $msg}'
   exit 0

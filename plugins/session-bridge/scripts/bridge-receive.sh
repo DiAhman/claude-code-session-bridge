@@ -33,19 +33,18 @@ while [ "$ELAPSED" -lt "$TIMEOUT" ]; do
     STATUS=$(jq -r '.status // "pending"' "$MSG_FILE" 2>/dev/null) || continue
     [ "$STATUS" = "pending" ] || continue
 
-    # Found an unread response!
-    CONTENT=$(jq -r '.content' "$MSG_FILE")
-    FROM_PROJECT=$(jq -r '.metadata.fromProject // "unknown"' "$MSG_FILE")
-    MSG_TYPE=$(jq -r '.type' "$MSG_FILE")
+    # Found an unread response — claim atomically
+    MSG_BASENAME=$(basename "$MSG_FILE")
+    CLAIMED_FILE="$INBOX/.claimed_${MSG_BASENAME}"
+    mv "$MSG_FILE" "$CLAIMED_FILE" 2>/dev/null || continue  # Another process got it
 
-    # Mark as read (with temp cleanup on failure)
-    TMP=$(mktemp "$INBOX/$(basename "$MSG_FILE" .json).XXXXXX")
-    jq '.status = "read"' "$MSG_FILE" > "$TMP" \
-      && mv "$TMP" "$MSG_FILE" \
-      || rm -f "$TMP"
+    CONTENT=$(jq -r '.content' "$CLAIMED_FILE")
+    FROM_PROJECT=$(jq -r '.metadata.fromProject // "unknown"' "$CLAIMED_FILE")
 
+    # Output FIRST, then delete (prevents message loss on process death)
     echo "Response from $FROM_PROJECT:"
     echo "$CONTENT"
+    rm -f "$CLAIMED_FILE" 2>/dev/null || true
     exit 0
   done
 

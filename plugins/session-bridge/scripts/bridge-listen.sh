@@ -91,7 +91,17 @@ done
 # automatically when the file descriptor closes (process exit). The lock file
 # must persist on disk so the NEXT listener flocks the SAME inode. Deleting it
 # causes the next listener to create a new file (new inode), bypassing the lock.
-trap '_log "EXIT signal=$?"; rm -f "$WATCHER_CHILD_FILE" 2>/dev/null; exit' EXIT INT TERM
+# Kill inotifywait/fswatch child on exit to prevent orphans
+_cleanup_child() {
+  if [ -n "${INOTIFY_PID:-}" ] && kill -0 "$INOTIFY_PID" 2>/dev/null; then
+    kill "$INOTIFY_PID" 2>/dev/null || true
+  fi
+  if [ -n "${FSWATCH_PID:-}" ] && kill -0 "$FSWATCH_PID" 2>/dev/null; then
+    kill "$FSWATCH_PID" 2>/dev/null || true
+  fi
+  rm -f "$WATCHER_CHILD_FILE" 2>/dev/null
+}
+trap '_log "EXIT signal=$?"; _cleanup_child; exit' EXIT INT TERM
 
 # Detect filesystem watcher
 if command -v inotifywait >/dev/null 2>&1; then
@@ -112,9 +122,12 @@ while true; do
     exit 1
   fi
 
-  # Recover any orphaned .claimed_ files (from killed bridge-listen processes)
+  # Recover orphaned .claimed_ files older than 30 seconds (from killed processes)
+  CLAIM_NOW=$(date +%s)
   for CLAIMED in "$INBOX"/.claimed_*.json; do
     [ -f "$CLAIMED" ] || continue
+    CLAIM_MTIME=$(stat -c %Y "$CLAIMED" 2>/dev/null || stat -f %m "$CLAIMED" 2>/dev/null || echo "$CLAIM_NOW")
+    [ $((CLAIM_NOW - CLAIM_MTIME)) -lt 30 ] && continue  # Skip recent — probably still being processed
     ORIG_NAME=$(basename "$CLAIMED" | sed 's/^\.claimed_//')
     mv "$CLAIMED" "$INBOX/$ORIG_NAME" 2>/dev/null || true
   done
@@ -144,14 +157,9 @@ while true; do
       continue
     fi
 
-    # Delete claimed message after reading — no need to keep read messages
-    rm -f "$CLAIMED_FILE" 2>/dev/null || {
-      mv "$CLAIMED_FILE" "$MSG_FILE" 2>/dev/null || true
-    }
-
     _log "MESSAGE id=$MSG_ID type=$MSG_TYPE from=$FROM_ID ($FROM_PROJECT)"
 
-    # Output message details for the agent
+    # Output message details for the agent FIRST, then delete
     echo "MESSAGE_ID=$MSG_ID"
     echo "FROM_ID=$FROM_ID"
     echo "TO_ID=$TO_ID"
@@ -160,6 +168,8 @@ while true; do
     echo "IN_REPLY_TO=$IN_REPLY_TO"
     echo "---"
     echo "$CONTENT"
+    # Delete AFTER output to prevent message loss on process death
+    rm -f "$CLAIMED_FILE" 2>/dev/null || true
     exit 0
   done
 
@@ -169,12 +179,12 @@ while true; do
       if [ "$TIMEOUT" -gt 0 ]; then
         REMAINING=$((TIMEOUT - ELAPSED))
       else
-        REMAINING=0  # inotifywait -t 0 = wait forever (event-driven, zero CPU)
+        REMAINING=300  # 5-min blocks; loop re-checks inbox + directory existence between cycles
       fi
       # Run inotifywait in background so we can track its PID for cleanup.
-      # This prevents orphaned inotifywait processes when the parent exits.
+      # Close fd 9 (flock) so the child doesn't inherit the lock.
       _log "WAIT inotifywait -t $REMAINING pid=$$"
-      inotifywait -t "$REMAINING" -e create "$INBOX" >/dev/null 2>&1 &
+      inotifywait -t "$REMAINING" -e create "$INBOX" >/dev/null 2>&1 9>&- &
       INOTIFY_PID=$!
       echo "$INOTIFY_PID" > "$WATCHER_CHILD_FILE"
       WATCH_RC=0
@@ -206,10 +216,10 @@ while true; do
       if [ "$TIMEOUT" -gt 0 ]; then
         REMAINING=$((TIMEOUT - ELAPSED))
       else
-        REMAINING=0  # timeout 0 = no limit (fswatch blocks until event)
+        REMAINING=300  # 5-min blocks; loop re-checks between cycles
       fi
       START_WAIT=$(date +%s)
-      timeout "$REMAINING" fswatch --one-event "$INBOX" >/dev/null 2>&1 &
+      timeout "$REMAINING" fswatch --one-event "$INBOX" >/dev/null 2>&1 9>&- &
       FSWATCH_PID=$!
       echo "$FSWATCH_PID" > "$WATCHER_CHILD_FILE"
       wait "$FSWATCH_PID" 2>/dev/null || true
