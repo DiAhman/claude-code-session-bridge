@@ -5,15 +5,16 @@
   </p>
   <p align="center">
     <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue.svg" alt="MIT License"></a>
-    <img src="https://img.shields.io/badge/tests-350%20passing-brightgreen" alt="Tests">
-    <img src="https://img.shields.io/badge/version-0.2.0-blue" alt="Version 0.2.0">
+    <img src="https://img.shields.io/badge/tests-353%20passing-brightgreen" alt="Tests">
+    <img src="https://img.shields.io/badge/version-0.2.21-blue" alt="Version 0.2.21">
   </p>
   <p align="center">
     <a href="#how-it-works">How It Works</a> &middot;
     <a href="#getting-started">Getting Started</a> &middot;
     <a href="#orchestration">Orchestration</a> &middot;
     <a href="#commands">Commands</a> &middot;
-    <a href="#ad-hoc-mode">Ad-Hoc Mode</a>
+    <a href="#under-the-hood">Under the Hood</a> &middot;
+    <a href="#developing-against-a-local-checkout">Local Dev</a>
   </p>
 </p>
 
@@ -22,6 +23,19 @@
 Working across multiple repos? Each Claude Code session is isolated — the auth server doesn't know what the frontend changed, the framework doesn't know the API contract shifted. **session-bridge** connects them so they coordinate autonomously.
 
 You talk to one session. It delegates to the others, they collaborate, escalate when stuck, ask you for decisions they can't make, and report back when done. You don't switch terminals.
+
+```mermaid
+flowchart LR
+    User((You)) -->|natural language| Orch[🎯 Orchestrator<br/><i>your main session</i>]
+    Orch -->|task-assign| Auth[🔐 auth-server<br/><i>JWT, sessions</i>]
+    Orch -->|task-assign| FW[📚 framework<br/><i>shared libs, DB</i>]
+    Orch -->|task-assign| UI[🎨 dashboard<br/><i>frontend</i>]
+    Auth -. escalate .-> FW
+    FW -->|task-complete| Auth
+    Auth -->|task-complete| Orch
+    UI -->|task-complete| Orch
+    Orch -->|summary + decisions| User
+```
 
 ---
 
@@ -145,19 +159,25 @@ The orchestrator matches issues to specialists by specialty, sends task assignme
 
 ### Task Delegation Chains
 
-When a specialist hits a problem outside its area, it escalates automatically:
+When a specialist hits a problem outside its area, it escalates automatically. Each handoff creates a **conversation** with a `parentConversation` link; when child conversations resolve, results cascade back up the chain.
 
+```mermaid
+sequenceDiagram
+    autonumber
+    participant U as You
+    participant O as Orchestrator
+    participant A as auth-server
+    participant F as framework
+    U->>O: Fix issue #123 (token expiry bug)
+    O->>A: task-assign #123 [conv-001]
+    Note over A: Traces bug into middleware<br/>outside my area
+    A->>F: escalate [conv-002, parent=conv-001]
+    Note over F: Needs a DB migration
+    F->>F: run migration
+    F-->>A: task-complete [conv-002 resolved]
+    A-->>O: task-complete [conv-001 resolved]
+    O-->>U: Done. Summary + diff.
 ```
-Orchestrator assigns #123 to auth-server
-  -> Auth-server traces the bug to the framework's middleware
-  -> Auth-server escalates to framework session
-  -> Framework finds it needs a database migration
-  -> Framework runs the migration, reports fix to auth-server
-  -> Auth-server applies the fix, reports back to orchestrator
-  -> Orchestrator closes #123
-```
-
-Each handoff creates a **conversation** with a `parentConversation` link. When child conversations resolve, results cascade back up the chain.
 
 ### Human-in-the-Loop
 
@@ -237,27 +257,64 @@ Legacy commands: `/bridge start`, `/bridge connect <id>`, `/bridge ask <question
 
 ### Communication
 
-- **At turn boundaries**: `Stop` hook checks inbox when Claude finishes responding. If messages are queued, they're injected immediately and Claude keeps processing — draining multiple messages in a burst without relaunching the listener. Safety cap at 10 consecutive blocks.
-- **During active work**: `PostToolUse` hook checks inbox every 5 seconds (rate-limited). `UserPromptSubmit` hook checks immediately when you press Enter.
-- **During idle**: `bridge-listen.sh` blocks on `inotifywait` (Linux) or `fswatch` (macOS) — zero CPU, instant wakeup when a message arrives.
+Three complementary delivery paths, each optimized for a different session state:
+
+```mermaid
+flowchart TD
+    subgraph idle[Session idle]
+        LS[bridge-listen.sh]
+        LS -->|inotifywait blocks<br/>zero CPU| W{Message<br/>arrives?}
+        W -->|yes| Deliver1[Deliver + exit]
+    end
+    subgraph active[Actively tool-using]
+        TU[Tool call] --> PTU[PostToolUse hook]
+        PTU -->|rate-limited 5s| Check1[check-inbox.sh]
+        Check1 -->|pending?| Inject1[Inject into context]
+    end
+    subgraph turn[Turn boundary]
+        End[Turn ends] --> Stop[Stop hook]
+        Stop --> Check2[check-inbox.sh --stop-hook]
+        Check2 -->|pending?| Block[Block stop, inject batch]
+        Block --> Handle[Agent processes batch]
+        Handle --> End
+    end
+```
+
+- **At turn boundaries**: `Stop` hook drains the queue when Claude finishes responding. Multiple messages in a burst get handled without relaunching the listener. Safety cap at 10 consecutive blocks.
+- **During active work**: `PostToolUse` hook checks inbox every 5 seconds (rate-limited). `UserPromptSubmit` checks immediately when you press Enter.
+- **During idle**: `bridge-listen.sh` blocks on `inotifywait` (Linux) or `fswatch` (macOS) — zero CPU, instant wakeup.
+- **Status markers**: listener output is prefixed with `BRIDGE_STATUS=delivered` / `already_running` / `timeout` so the agent never double-launches or burns cycles misinterpreting silent exits.
+- **Visibility lines**: after handling each message the agent emits a compact two-line trace (`← task-update from web (abc123): migration done, moving to UI` then `→ standby`) so the transcript stays readable even during bursts.
 - **Messages**: JSON files in each session's inbox directory. Atomic writes (temp file + `mv`). Protocol version 2.0.
 
 ### Conversations
 
-Auto-created on `query` and `task-assign`, auto-resolved on `task-complete`. Threaded via `conversationId`, chained via `parentConversation`. Status tracking: `open` -> `waiting` -> `resolved`.
+Auto-created on `query` and `task-assign`, auto-resolved on `task-complete`. Threaded via `conversationId`, chained via `parentConversation`.
+
+```mermaid
+stateDiagram-v2
+    [*] --> open: query / task-assign<br/>creates conversation
+    open --> waiting: request sent,<br/>awaiting reply
+    waiting --> open: reply received,<br/>more work pending
+    open --> resolved: task-complete /<br/>task-cancel
+    waiting --> resolved: task-complete /<br/>task-cancel
+    resolved --> [*]
+```
 
 ### Message Types
 
 | Type | Purpose |
 |------|---------|
-| `task-assign` | Delegate work |
-| `query` / `response` | Ask and answer |
-| `escalate` | Route to another specialist |
-| `task-complete` | Report finished work |
-| `task-update` | Progress report |
-| `task-cancel` / `task-redirect` | Cancel or replace |
-| `human-input-needed` / `human-response` | Decision escalation |
-| `routing-query` | "Who handles X?" |
+| `task-assign` | Delegate work (creates a new conversation) |
+| `query` / `response` | Ask and answer (query creates a conversation if none) |
+| `escalate` | Route work to another specialist (creates child conversation) |
+| `task-complete` | Report finished work (auto-resolves conversation) |
+| `task-update` | Progress report mid-task |
+| `task-cancel` / `task-redirect` | Cancel or replace an in-flight task |
+| `human-input-needed` / `human-response` | Decision escalation to and from the user |
+| `routing-query` | "Who handles X?" — usually answered by the orchestrator |
+| `ping` | Connection check |
+| `session-ended` | Peer is shutting down — sent automatically on `/bridge stop` |
 
 ### Directory Structure
 
@@ -306,8 +363,24 @@ A `SessionStart` hook reads this file and auto-joins on every subsequent `claude
 
 ```bash
 cd plugins/session-bridge && bash test.sh
-# 350 passed, 0 failed (22 test files)
+# 353 passed, 0 failed (22 test files)
 ```
+
+## Developing Against a Local Checkout
+
+If you're editing this plugin and your changes don't seem to take effect: Claude Code **snapshots** directory-source plugins at install time into `~/.claude/plugins/cache/session-bridge/session-bridge/<version>/`. Edits to the source don't propagate until you reinstall the plugin via `/plugin`, or replace the snapshot with a symlink:
+
+```bash
+# one-time setup for live development
+rm -rf ~/.claude/plugins/cache/session-bridge/session-bridge/<old-version>
+ln -s /path/to/claude-code-session-bridge/plugins/session-bridge \
+      ~/.claude/plugins/cache/session-bridge/session-bridge/live
+
+# then update ~/.claude/plugins/installed_plugins.json so
+# session-bridge's installPath points at .../live
+```
+
+After that, every edit is picked up on the next Claude Code restart — no reinstall dance.
 
 <details>
 <summary>Plugin file structure</summary>
@@ -329,15 +402,16 @@ plugins/session-bridge/
     get-session-id.sh              heartbeat.sh
     register.sh                    connect-peer.sh
   test.sh
-  tests/ (22 test files, 350 tests)
+  tests/ (22 test files, 353 tests)
 ```
 
 </details>
 
 ## Design Documents
 
-- **Spec**: [`docs/superpowers/specs/2026-03-19-bidirectional-bridge-design.md`](docs/superpowers/specs/2026-03-19-bidirectional-bridge-design.md)
-- **Plan**: [`docs/superpowers/plans/2026-03-19-bidirectional-bridge.md`](docs/superpowers/plans/2026-03-19-bidirectional-bridge.md)
+- **v2 spec** — [`docs/superpowers/specs/2026-03-19-bidirectional-bridge-design.md`](docs/superpowers/specs/2026-03-19-bidirectional-bridge-design.md)
+- **v2 plan** — [`docs/superpowers/plans/2026-03-19-bidirectional-bridge.md`](docs/superpowers/plans/2026-03-19-bidirectional-bridge.md)
+- **Departments brainstorm** — [`docs/superpowers/specs/2026-04-22-departments-hierarchy-brainstorm.md`](docs/superpowers/specs/2026-04-22-departments-hierarchy-brainstorm.md) (3-layer hierarchy exploration, not yet implemented)
 
 ## Credits
 
