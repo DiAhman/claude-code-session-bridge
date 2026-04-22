@@ -167,10 +167,12 @@ The loop:
    # IMPORTANT: call this with run_in_background: true on the Bash tool
    bash "${CLAUDE_PLUGIN_ROOT}/scripts/bridge-listen.sh" "$MY_SESSION" 0
    ```
-   After launching the background listener, output a brief status message (e.g., "Listening in background...") and **end your turn**. Do NOT call any more tools or keep the turn open. You will be automatically notified when the listener completes (message received).
-3. When the background listener completes and you receive the notification, parse the output:
-   - Lines before `---` are metadata (MESSAGE_ID, FROM_ID, TO_ID, FROM_PROJECT, TYPE, IN_REPLY_TO, CONV_ID)
-   - Lines after `---` are the message content
+   After launching the background listener, emit the single-line visibility marker `→ standby` and **end your turn**. Do NOT call any more tools or keep the turn open. You will be automatically notified when the listener completes.
+3. When the background listener completes, **parse the first line** of its output to decide what to do:
+   - `BRIDGE_STATUS=delivered` — a message arrived. Remaining lines before `---` are metadata (MESSAGE_ID, FROM_ID, TO_ID, FROM_PROJECT, TYPE, IN_REPLY_TO, CONV_ID); lines after `---` are the content. Proceed to step 4.
+   - `BRIDGE_STATUS=already_running` — your previous listener is still alive. Do **nothing**, do **not** relaunch, do **not** emit any visibility line. End the turn silently.
+   - `BRIDGE_STATUS=timeout` — relaunch with timeout 0.
+   - No status line / empty output — legacy or transient state. Relaunch once.
 
 4. Handle by message type. **Use `TO_ID` from the message metadata as your session ID** when sending responses. This is always correct regardless of working directory.
 
@@ -217,7 +219,18 @@ The loop:
 
    **If TYPE=session-ended**: Note it and tell the user: "Peer [FROM_PROJECT] disconnected."
 
-5. **IMMEDIATELY go back to step 2.** Run `bridge-listen.sh` again with `run_in_background: true`, output a brief status, and end your turn. Do NOT stop. Do NOT ask the user what to do next. **Note:** The `Stop` hook may catch additional queued messages before you go idle — if it injects more messages (you'll see "=== CLAUDE BRIDGE: N pending message(s) ===" context), handle those first, then relaunch the listener.
+5. **Before relaunching, emit the two visibility lines** so the user can see what happened without reading raw tool output:
+   ```
+   ← [msg-type] from [project] ([session-id]): [one-sentence summary under 20 words]
+   → standby
+   ```
+   Summary rules:
+   - One sentence, under 20 words. Describe the content ("finished migration X", "blocked on Y"), not the mechanics.
+   - For `ping` / `session-ended`: omit the colon and summary: `← ping from auth (abc123)`.
+   - For `query` / `human-input-needed`: prefix with `⚠` so the user spots it in scrollback: `⚠← query from …: <summary>`.
+   - For `already_running` or `timeout`: emit nothing — silence is correct.
+
+6. **IMMEDIATELY go back to step 2.** Run `bridge-listen.sh` again with `run_in_background: true`, emit `→ standby`, and end your turn. Do NOT stop. Do NOT ask the user what to do next. **Note:** The `Stop` hook may catch additional queued messages before you go idle — if it injects more messages (you'll see "=== CLAUDE BRIDGE: N pending message(s) ===" context), handle those first, then relaunch the listener.
 
 **CRITICAL — RESILIENCE RULES:**
 

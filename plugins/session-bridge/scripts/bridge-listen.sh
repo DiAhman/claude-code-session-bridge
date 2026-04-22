@@ -69,6 +69,7 @@ WATCHER_CHILD_FILE="$SESSION_DIR/bridge-listen-child.pid"
 exec 9>"$LOCK_FILE"
 if ! flock -n 9; then
   _log "BLOCKED — another listener holds lock, exiting"
+  echo "BRIDGE_STATUS=already_running"
   exit 0
 fi
 # Lock acquired — we are the only listener for this session
@@ -121,6 +122,7 @@ while true; do
   # Timeout check (0 = infinite)
   if [ "$TIMEOUT" -gt 0 ] && [ "$ELAPSED" -ge "$TIMEOUT" ]; then
     _log "TIMEOUT elapsed=${ELAPSED}s"
+    echo "BRIDGE_STATUS=timeout"
     exit 1
   fi
 
@@ -163,6 +165,7 @@ while true; do
     _log "MESSAGE id=$MSG_ID type=$MSG_TYPE from=$FROM_ID ($FROM_PROJECT)"
 
     # Output message details for the agent FIRST, then delete
+    echo "BRIDGE_STATUS=delivered"
     echo "MESSAGE_ID=$MSG_ID"
     echo "FROM_ID=$FROM_ID"
     echo "TO_ID=$TO_ID"

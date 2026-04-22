@@ -128,4 +128,33 @@ assert_contains "finds project-scoped message" "TYPE=ping" "$OUTPUT"
 
 rm -rf "$V2_TMPDIR"
 
+echo ""
+echo "--- BRIDGE_STATUS output markers ---"
+
+# Test S1: delivered status prefix on successful message delivery
+echo ""
+echo "Test S1: emits BRIDGE_STATUS=delivered when a message is handed off"
+BRIDGE_DIR="$BRIDGE_DIR" BRIDGE_SESSION_ID="$SESSION_A" bash "$SEND_MSG" "$SESSION_B" ping "status-test" > /dev/null
+OUTPUT=$(BRIDGE_DIR="$BRIDGE_DIR" bash "$LISTEN" "$SESSION_B" 5)
+FIRST_LINE=$(echo "$OUTPUT" | head -1)
+assert_eq "first line is BRIDGE_STATUS=delivered" "BRIDGE_STATUS=delivered" "$FIRST_LINE"
+
+# Test S2: already_running status when a second listener can't get the lock
+echo ""
+echo "Test S2: emits BRIDGE_STATUS=already_running when another listener holds the lock"
+BRIDGE_DIR="$BRIDGE_DIR" bash "$LISTEN" "$SESSION_B" 60 >/dev/null 2>&1 &
+HOLDER_PID=$!
+# Give the holder a moment to take the flock
+sleep 1
+SECOND_OUTPUT=$(BRIDGE_DIR="$BRIDGE_DIR" bash "$LISTEN" "$SESSION_B" 5 2>/dev/null || true)
+kill "$HOLDER_PID" 2>/dev/null || true
+wait "$HOLDER_PID" 2>/dev/null || true
+assert_eq "second listener reports already_running" "BRIDGE_STATUS=already_running" "$SECOND_OUTPUT"
+
+# Test S3: timeout status when listener hits its timeout with no message
+echo ""
+echo "Test S3: emits BRIDGE_STATUS=timeout on timeout with empty inbox"
+TIMEOUT_OUTPUT=$(BRIDGE_DIR="$BRIDGE_DIR" bash "$LISTEN" "$SESSION_B" 2 2>/dev/null || true)
+assert_eq "timed-out listener reports timeout" "BRIDGE_STATUS=timeout" "$TIMEOUT_OUTPUT"
+
 print_results

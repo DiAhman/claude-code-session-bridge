@@ -89,12 +89,54 @@ After finishing all work and sending results, **always** enter standby. Never si
 bash "${CLAUDE_PLUGIN_ROOT}/scripts/bridge-listen.sh" "$MY_SESSION" 0
 ```
 
-**You MUST use `run_in_background: true`** on the Bash tool call. This immediately backgrounds the listener so your turn ends and zero tokens are consumed while idle. The listener blocks at zero CPU via `inotifywait` until a message arrives. After launching the background listener, output a brief status (e.g., "Listening...") and **end your turn**.
+**You MUST use `run_in_background: true`** on the Bash tool call. This immediately backgrounds the listener so your turn ends and zero tokens are consumed while idle. The listener blocks at zero CPU via `inotifywait` until a message arrives. After launching the background listener, emit the single-line visibility marker `→ standby` and **end your turn**.
 
-When the background listener completes (message arrives), you will be notified automatically:
-- Parse the message, handle it by type, then **start a new background listener** for the next message.
+When the background listener completes, parse the **first line** to decide what to do:
+
+- `BRIDGE_STATUS=delivered` — a message arrived. Metadata + content follow. Handle the message, emit the two visibility lines (see below), then launch a new listener.
+- `BRIDGE_STATUS=already_running` — your previous listener is still alive. Do **nothing**, do **not** relaunch, do **not** narrate. Just end the turn silently.
+- `BRIDGE_STATUS=timeout` — the listener hit its timeout (only fires if you passed a non-zero timeout, which you shouldn't). Relaunch with timeout 0.
+- **No `BRIDGE_STATUS=` line / empty output** — legacy or transient state. Relaunch once.
+
+### Visibility Lines (ALWAYS emit when a message is delivered)
+
+After handling every message and before relaunching the listener, emit exactly two plain-text lines:
+
+```
+← [msg-type] from [project] ([session-id]): [one-sentence summary under 20 words]
+→ standby
+```
+
+Summary rules:
+- **One sentence, under 20 words.** Describe the content ("finished migration X", "blocked on Y", "ready to merge Z"), not the mechanics ("received a message about…").
+- For `ping` and `session-ended`: omit the summary colon and message entirely, just emit `← ping from …` or `← session-ended from …`.
+- For `query` and `human-input-needed`: prefix the arrow with `⚠` so the user spots it in scrollback: `⚠← query from …: <summary>`.
+- For `already_running` or `timeout`: emit nothing. Silence is correct.
+
+Examples:
+```
+← task-update from shell (dioj5f): backend migration finished, moving to frontend integration
+→ standby
+```
+```
+⚠← human-input-needed from toparius (vpverw): RS256 vs HS256 for JWT signing, needs user decision
+→ standby
+```
+```
+← ping from auth (abc123)
+→ standby
+```
 
 **After handling every message, run `bridge-listen.sh` again with `run_in_background: true`.** Never stop to ask what to do next. Never break the loop unless the user presses Ctrl+C. **Note:** The `Stop` hook may catch additional queued messages before you go idle — if it injects more messages (you'll see "=== CLAUDE BRIDGE: N pending message(s) ===" context), handle those first, then relaunch the listener.
+
+### Orchestrator Standby Notes
+
+If your role is `orchestrator`, expect frequent listener relaunches. You are the hub for every specialist, so a steady stream of `task-update`/`task-complete` messages is normal — that is NOT looping, it's load.
+
+- Do **not** double-launch "just in case." If you see `BRIDGE_STATUS=already_running`, your previous listener is still alive. End the turn.
+- Between messages, the Stop hook drains any queue at turn boundaries. You do not need to relaunch the listener inside the same turn.
+- Keep message handling turns **tight**: read, emit the two visibility lines, respond via `send-message.sh`, relaunch. Do not narrate the mechanics of "I'm about to launch the listener in the background" — the `→ standby` line is sufficient.
+- Token burn scales with specialist chatter, not with bugs. If the conversation is noisy, reduce the frequency of `task-update` messages from specialists (encourage `task-complete`-only unless a milestone genuinely needs reporting).
 
 **Resilience:** If `bridge-listen.sh` exits with an error or timeout, retry immediately — do not stop or ask the user. If a hook error occurs, ignore it and re-enter the loop. The default action is ALWAYS to run `bridge-listen.sh` again. Never voluntarily exit standby.
 
