@@ -6,12 +6,12 @@ Fork of `PatilShreyas/claude-code-session-bridge` — peer-to-peer communication
 
 ```
 plugins/session-bridge/
-  .claude-plugin/plugin.json     # Plugin manifest (currently v0.1.1)
+  .claude-plugin/plugin.json     # Plugin manifest (currently v0.2.21)
   commands/bridge.md             # /bridge command definition
   hooks/hooks.json               # SessionStart, UserPromptSubmit, PostToolUse, PreCompact, Stop, SessionEnd hooks
   skills/bridge-awareness/SKILL.md  # Agent behavior skill
-  scripts/                       # Core bash scripts (10 scripts, ~584 lines)
-  tests/                         # Test suite (11 test files, ~1175 lines, 132 tests)
+  scripts/                       # Core bash scripts (18 scripts, ~1985 lines)
+  tests/                         # Test suite (22 test files, ~2773 lines, 353 tests)
   test.sh                        # Test runner
 ```
 
@@ -55,27 +55,34 @@ Runtime data lives at `~/.claude/session-bridge/` (not in the repo). Tests overr
 - `origin`: `DiAhman/claude-code-session-bridge` (our fork)
 - `upstream`: `PatilShreyas/claude-code-session-bridge` (original)
 
-## Current Work: Bidirectional Bridge v2
+## Bidirectional Bridge v2 (shipped)
 
-We are implementing bidirectional, project-scoped, autonomous multi-session orchestration.
+The bidirectional, project-scoped, autonomous multi-session orchestration system is implemented and stable as of v0.2.21. Protocol version: **2.0**.
 
-- **Spec**: `docs/superpowers/specs/2026-03-19-bidirectional-bridge-design.md`
-- **Plan**: `docs/superpowers/plans/2026-03-19-bidirectional-bridge.md`
-- **Protocol version**: 2.0
+- **Spec** (historical): `docs/superpowers/specs/2026-03-19-bidirectional-bridge-design.md`
+- **Plan** (historical): `docs/superpowers/plans/2026-03-19-bidirectional-bridge.md`
+- **Future direction (not yet implemented)**: `docs/superpowers/specs/2026-04-22-departments-hierarchy-brainstorm.md` — a 3-layer (orchestrator → lead → specialist) hierarchy for projects with many specialists.
 
 ### v2 Key Concepts
 
 - **Projects** group sessions (`~/.claude/session-bridge/projects/<name>/`)
-- **Conversations** thread messages with state tracking (open/waiting/resolved)
-- **Hook-driven async**: `UserPromptSubmit` + rate-limited `PostToolUse` replace blocking listen
+- **Conversations** thread messages with state tracking (open/waiting/resolved); chained via `parentConversation`
+- **Three-path message delivery**:
+  - `Stop` hook drains queues at turn boundaries (with safety cap)
+  - `UserPromptSubmit` + rate-limited `PostToolUse` deliver during active work
+  - `bridge-listen.sh` blocks at zero CPU (`inotifywait`/`fswatch`/poll fallback) when idle
 - **Auto-join**: `SessionStart` hook reads `.claude/bridge-role` and rejoins project automatically
-- **Standby mode**: agent runs `bridge-listen.sh` loop when idle (not at prompt)
-- **Escalation chains**: conversations link via `parentConversation`
+- **Standby concurrency**: `flock` ensures only one listener per session; `BRIDGE_STATUS=` markers (delivered / already_running / timeout) let the agent reason about listener state without spurious relaunches
+- **Visibility lines**: agents emit `← <type> from <project>: <one-sentence summary>` then `→ standby` after each handled message — keeps the transcript readable during bursts
 - **Human-in-the-loop**: `human-input-needed` messages with `proposedDefault` and `blocksWork`
 
 ### v2 Backward Compatibility
 
 Legacy ad-hoc bridges (`/bridge start` + `/bridge connect`) still work via the flat `sessions/` directory. The project system is opt-in.
+
+## Local Plugin Cache Quirk
+
+Claude Code snapshots directory-source plugins into `~/.claude/plugins/cache/<marketplace>/<plugin>/<version>/` at install time. Local edits to this repo's `plugins/session-bridge/` do **not** propagate to running sessions until the snapshot is refreshed. When developing this plugin against your own Claude Code, replace the snapshot directory with a symlink to `plugins/session-bridge/` and update `~/.claude/plugins/installed_plugins.json` to point at the symlink path. See README "Developing Against a Local Checkout" for the exact commands.
 
 ## Prerequisites
 
