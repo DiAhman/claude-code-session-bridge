@@ -61,15 +61,17 @@ assert_contains "has peer project name" "project-a" "$SYSTEM_MSG"
 assert_contains "has message content" "What APIs do you expose?" "$SYSTEM_MSG"
 assert_contains "has send-message instruction" "send-message.sh" "$SYSTEM_MSG"
 
-# --- Test 3: Message deleted from inbox after check ---
+# --- Test 3: Message archived (not deleted) after check ---
 echo ""
-echo "Test 3: Message deleted from inbox after check"
+echo "Test 3: Message moved to .delivered/ after check"
 MSG_FILE="$BRIDGE_DIR/sessions/$TARGET_ID/inbox/$MSG_ID.json"
 if [ -f "$MSG_FILE" ]; then
-  echo "  FAIL: message still exists in inbox"; FAIL=$((FAIL + 1))
+  echo "  FAIL: message still in inbox at original path"; FAIL=$((FAIL + 1))
 else
-  echo "  PASS: message deleted after read"; PASS=$((PASS + 1))
+  echo "  PASS: message removed from inbox"; PASS=$((PASS + 1))
 fi
+ARCHIVE="$BRIDGE_DIR/sessions/$TARGET_ID/inbox/.delivered/$MSG_ID.json"
+assert_file_exists "message archived in .delivered/" "$ARCHIVE"
 
 # --- Test 4: Heartbeat updated ---
 echo ""
@@ -361,7 +363,8 @@ assert_eq "stop-hook cap: exit 0 with no output at counter=10" "" "$OUTPUT"
 COUNTER_VAL=$(cat "$COUNTER_FILE" 2>/dev/null || echo "99")
 assert_eq "stop-hook cap: counter reset to 0" "0" "$COUNTER_VAL"
 # Message should still be pending (not claimed)
-PENDING_COUNT=$(find "$SH_BRIDGE/projects/stop-test/sessions/$SH_SID_B/inbox" -name "*.json" \
+# Exclude .delivered/ archive dir — those files retain their original "pending" status
+PENDING_COUNT=$(find "$SH_BRIDGE/projects/stop-test/sessions/$SH_SID_B/inbox" -maxdepth 1 -name "*.json" \
   -exec jq -r 'select(.status == "pending") | .id' {} \; 2>/dev/null | wc -l)
 assert_eq "stop-hook cap: message still pending" "1" "$PENDING_COUNT"
 # Clean up the pending message for subsequent tests
@@ -432,5 +435,10 @@ BRIDGE_DIR="$BRIDGE_DIR" BRIDGE_SESSION_ID="$TARGET_ID" \
   bash "$CHECK_INBOX" --stop-hook >/dev/null 2>&1 || true
 LOG_CONTENT=$(cat "$LOG_FILE" 2>/dev/null || echo "")
 assert_contains "log has stop-hook OUTPUT" "OUTPUT mode=stop-hook count=1" "$LOG_CONTENT"
+
+# --- Test A1: Archive content matches original message ---
+echo ""
+echo "Test A1: Archived file is valid JSON with original ID"
+assert_json_field "archived file has correct id" "$ARCHIVE" ".id" "$MSG_ID"
 
 print_results

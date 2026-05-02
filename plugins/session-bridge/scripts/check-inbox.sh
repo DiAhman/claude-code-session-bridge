@@ -29,6 +29,23 @@ _restore_claimed_files() {
   done
 }
 
+# Archive a claimed file into <inbox>/.delivered/<msg-id>.json so it can be
+# audited for 24h before cleanup prunes it. Falls back to rm -f if the move
+# fails for any reason (full disk, permissions) — better to lose audit than
+# leak claimed-but-undeleted files into the next listener's recovery sweep.
+_archive_claimed() {
+  local F="$1"
+  [ -f "$F" ] || return 0
+  local INBOX_DIR ORIG_NAME ARCHIVE_DIR
+  INBOX_DIR=$(dirname "$F")
+  ARCHIVE_DIR="$INBOX_DIR/.delivered"
+  ORIG_NAME=$(basename "$F" | sed 's/^\.claimed_//')
+  mkdir -p "$ARCHIVE_DIR" 2>/dev/null
+  if ! mv "$F" "$ARCHIVE_DIR/$ORIG_NAME" 2>/dev/null; then
+    rm -f "$F" 2>/dev/null || true
+  fi
+}
+
 # --- Logging (shared bridge-listen.log) ---
 # Set after MY_INBOX is resolved; calls before that point are no-ops.
 _LOG_FILE=""
@@ -370,7 +387,7 @@ if [ "$STOP_HOOK" = true ]; then
     '{decision: "block", reason: $reason, hookSpecificOutput: {hookEventName: "Stop", additionalContext: $ctx}}'; then
     [ -n "${STOP_COUNTER_FILE:-}" ] && echo "$STOP_COUNTER" > "$STOP_COUNTER_FILE"
     _log "OUTPUT mode=stop-hook count=$TOTAL_COUNT"
-    for F in $FILES_TO_DELETE; do rm -f "$F" 2>/dev/null || true; done
+    for F in $FILES_TO_DELETE; do _archive_claimed "$F"; done
   else
     _log "RESTORE mode=stop-hook count=$TOTAL_COUNT reason=jq-failed"
     _restore_claimed_files
@@ -384,7 +401,7 @@ OUTPUT_MODE="user-prompt"
 [ "$RATE_LIMITED" = true ] && OUTPUT_MODE="post-tool"
 if jq -n --arg msg "$SYSTEM_MSG" '{continue: true, suppressOutput: false, systemMessage: $msg}'; then
   _log "OUTPUT mode=$OUTPUT_MODE count=$TOTAL_COUNT"
-  for F in $FILES_TO_DELETE; do rm -f "$F" 2>/dev/null || true; done
+  for F in $FILES_TO_DELETE; do _archive_claimed "$F"; done
 else
   _log "RESTORE mode=$OUTPUT_MODE count=$TOTAL_COUNT reason=jq-failed"
   _restore_claimed_files
