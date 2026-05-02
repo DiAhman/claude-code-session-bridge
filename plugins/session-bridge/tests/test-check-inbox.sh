@@ -412,4 +412,25 @@ assert_file_exists "log file created" "$LOG_FILE"
 LOG_CONTENT=$(cat "$LOG_FILE" 2>/dev/null || echo "")
 assert_contains "log has CLAIM entry" "CLAIM id=$MSG_ID_L1" "$LOG_CONTENT"
 
+# --- Test L2: check-inbox.sh logs OUTPUT entry on successful surface ---
+echo ""
+echo "Test L2: check-inbox.sh logs OUTPUT entry after writing systemMessage"
+MSG_ID_L2=$(BRIDGE_DIR="$BRIDGE_DIR" BRIDGE_SESSION_ID="$SENDER_ID" \
+  bash "$SEND_MSG" "$TARGET_ID" query "output-log-test" 2>/dev/null)
+BRIDGE_DIR="$BRIDGE_DIR" BRIDGE_SESSION_ID="$TARGET_ID" \
+  bash "$CHECK_INBOX" >/dev/null 2>&1
+LOG_FILE="$BRIDGE_DIR/sessions/$TARGET_ID/bridge-listen.log"
+LOG_CONTENT=$(cat "$LOG_FILE" 2>/dev/null || echo "")
+assert_contains "log has OUTPUT entry" "OUTPUT mode=user-prompt count=1" "$LOG_CONTENT"
+
+# --- Test L3: check-inbox.sh logs --stop-hook OUTPUT mode ---
+echo ""
+echo "Test L3: --stop-hook variant logs OUTPUT mode=stop-hook"
+MSG_ID_L3=$(BRIDGE_DIR="$BRIDGE_DIR" BRIDGE_SESSION_ID="$SENDER_ID" \
+  bash "$SEND_MSG" "$TARGET_ID" query "stop-hook-log-test" 2>/dev/null)
+BRIDGE_DIR="$BRIDGE_DIR" BRIDGE_SESSION_ID="$TARGET_ID" \
+  bash "$CHECK_INBOX" --stop-hook >/dev/null 2>&1 || true
+LOG_CONTENT=$(cat "$LOG_FILE" 2>/dev/null || echo "")
+assert_contains "log has stop-hook OUTPUT" "OUTPUT mode=stop-hook count=1" "$LOG_CONTENT"
+
 print_results

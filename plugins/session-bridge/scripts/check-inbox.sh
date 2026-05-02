@@ -368,20 +368,24 @@ if [ "$STOP_HOOK" = true ]; then
   if jq -n --arg reason "${TOTAL_COUNT} bridge message(s) pending" \
         --arg ctx "$SYSTEM_MSG" \
     '{decision: "block", reason: $reason, hookSpecificOutput: {hookEventName: "Stop", additionalContext: $ctx}}'; then
-    # Output succeeded — commit counter and delete claimed files
     [ -n "${STOP_COUNTER_FILE:-}" ] && echo "$STOP_COUNTER" > "$STOP_COUNTER_FILE"
+    _log "OUTPUT mode=stop-hook count=$TOTAL_COUNT"
     for F in $FILES_TO_DELETE; do rm -f "$F" 2>/dev/null || true; done
   else
-    # jq failed — restore claimed files so they can be re-delivered
+    _log "RESTORE mode=stop-hook count=$TOTAL_COUNT reason=jq-failed"
     _restore_claimed_files
   fi
   exit 0
 fi
 
+# --- Default mode: surface messages via systemMessage ---
+# RATE_LIMITED runs from PostToolUse; non-rate-limited runs from UserPromptSubmit.
+OUTPUT_MODE="user-prompt"
+[ "$RATE_LIMITED" = true ] && OUTPUT_MODE="post-tool"
 if jq -n --arg msg "$SYSTEM_MSG" '{continue: true, suppressOutput: false, systemMessage: $msg}'; then
-  # Output succeeded — delete claimed files
+  _log "OUTPUT mode=$OUTPUT_MODE count=$TOTAL_COUNT"
   for F in $FILES_TO_DELETE; do rm -f "$F" 2>/dev/null || true; done
 else
-  # jq failed — restore claimed files so they can be re-delivered
+  _log "RESTORE mode=$OUTPUT_MODE count=$TOTAL_COUNT reason=jq-failed"
   _restore_claimed_files
 fi
