@@ -221,4 +221,28 @@ fi
 kill_watchers "$V2_BRIDGE"
 rm -rf "$V2_TMPDIR"
 
+# --- Test D1: Cleanup prunes .delivered/ entries older than 24h ---
+echo ""
+echo "Test D1: Cleanup prunes .delivered/ files older than 24 hours"
+DELIV_DIR="$BRIDGE_DIR/projects/proj-test/sessions/abc123/inbox/.delivered"
+mkdir -p "$DELIV_DIR"
+# Old file (2 days ago) — should be pruned
+OLD_FILE="$DELIV_DIR/msg-old1234567890.json"
+echo '{"id":"msg-old1234567890","status":"delivered"}' > "$OLD_FILE"
+touch -d "2 days ago" "$OLD_FILE" 2>/dev/null || touch -A -480000 "$OLD_FILE" 2>/dev/null || true
+# Fresh file — should survive
+FRESH_FILE="$DELIV_DIR/msg-new1234567890.json"
+echo '{"id":"msg-new1234567890","status":"delivered"}' > "$FRESH_FILE"
+
+# Run cleanup with no session of its own (cleanup runs the prune block regardless)
+BRIDGE_DIR="$BRIDGE_DIR" PROJECT_DIR="$TEST_TMPDIR/no-such-project" \
+  bash "$CLEANUP" 2>/dev/null || true
+
+if [ -f "$OLD_FILE" ]; then
+  echo "  FAIL: stale archive entry not pruned"; FAIL=$((FAIL + 1))
+else
+  echo "  PASS: stale archive entry pruned"; PASS=$((PASS + 1))
+fi
+assert_file_exists "fresh archive entry retained" "$FRESH_FILE"
+
 print_results

@@ -41,9 +41,11 @@ else
   fi
 fi
 
-if [ -z "$SESSION_ID" ]; then
-  exit 0
-fi
+# Session-specific cleanup runs only when this invocation has a session of
+# its own. Global prune blocks (outbox / .delivered/ / resolved conversations
+# / stale sessions) further down run regardless, so cleanup.sh fired from any
+# project still maintains the bridge directory.
+if [ -n "$SESSION_ID" ]; then
 
 # Check if this session is in a project
 PROJECT_ID=""
@@ -160,12 +162,12 @@ else
 fi
 
 # Clean up per-session dotfiles for the current session
-if [ -n "$SESSION_ID" ]; then
-  rm -f "$BRIDGE_DIR/.stop_counter_${SESSION_ID}" "$BRIDGE_DIR/.last_inbox_check_${SESSION_ID}" 2>/dev/null || true
-fi
+rm -f "$BRIDGE_DIR/.stop_counter_${SESSION_ID}" "$BRIDGE_DIR/.last_inbox_check_${SESSION_ID}" 2>/dev/null || true
 
 # Remove bridge-session pointer
 rm -f "$BRIDGE_SESSION_FILE"
+
+fi  # end: session-specific cleanup (if [ -n "$SESSION_ID" ])
 
 # Helper: validate ISO 8601 timestamp format (YYYY-MM-DDTHH:MM:SSZ)
 is_valid_timestamp() {
@@ -219,6 +221,19 @@ if [ -n "$OUTBOX_CUTOFF" ] && is_valid_timestamp "$OUTBOX_CUTOFF"; then
     if is_valid_timestamp "$MSG_TS" && [[ "$MSG_TS" < "$OUTBOX_CUTOFF" ]]; then
       rm -f "$OUTBOX_FILE"
     fi
+  done
+fi
+
+# --- Prune .delivered/ archive entries older than 24 hours across all inboxes ---
+# Files in <inbox>/.delivered/ are kept for forensic audit of message
+# delivery; after 24h they are no longer useful for diagnosing losses.
+DELIV_CUTOFF_EPOCH=$(date -u -v-24H +%s 2>/dev/null || date -u -d "24 hours ago" +%s 2>/dev/null || echo "")
+if [ -n "$DELIV_CUTOFF_EPOCH" ]; then
+  for DELIV_FILE in "$BRIDGE_DIR"/projects/*/sessions/*/inbox/.delivered/*.json \
+                    "$BRIDGE_DIR"/sessions/*/inbox/.delivered/*.json; do
+    [ -f "$DELIV_FILE" ] || continue
+    F_MTIME=$(stat -c %Y "$DELIV_FILE" 2>/dev/null || stat -f %m "$DELIV_FILE" 2>/dev/null || echo "$DELIV_CUTOFF_EPOCH")
+    [ "$F_MTIME" -lt "$DELIV_CUTOFF_EPOCH" ] && rm -f "$DELIV_FILE"
   done
 fi
 
