@@ -399,4 +399,17 @@ assert_eq "drain call 2: no output (inbox empty)" "" "$OUT2"
 
 rm -rf "$SH_TMPDIR"
 
+# --- Test L1: check-inbox.sh writes a CLAIM log entry ---
+echo ""
+echo "Test L1: check-inbox.sh logs CLAIM entries to bridge-listen.log"
+# Send a message from A to TARGET so check-inbox has something to claim
+MSG_ID_L1=$(BRIDGE_DIR="$BRIDGE_DIR" BRIDGE_SESSION_ID="$SENDER_ID" \
+  bash "$SEND_MSG" "$TARGET_ID" query "log-test message" 2>/dev/null)
+BRIDGE_DIR="$BRIDGE_DIR" BRIDGE_SESSION_ID="$TARGET_ID" \
+  bash "$CHECK_INBOX" >/dev/null 2>&1
+LOG_FILE="$BRIDGE_DIR/sessions/$TARGET_ID/bridge-listen.log"
+assert_file_exists "log file created" "$LOG_FILE"
+LOG_CONTENT=$(cat "$LOG_FILE" 2>/dev/null || echo "")
+assert_contains "log has CLAIM entry" "CLAIM id=$MSG_ID_L1" "$LOG_CONTENT"
+
 print_results

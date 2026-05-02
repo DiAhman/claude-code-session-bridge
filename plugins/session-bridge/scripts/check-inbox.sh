@@ -29,6 +29,16 @@ _restore_claimed_files() {
   done
 }
 
+# --- Logging (shared bridge-listen.log) ---
+# Set after MY_INBOX is resolved; calls before that point are no-ops.
+_LOG_FILE=""
+_log() {
+  [ -z "$_LOG_FILE" ] && return 0
+  local TS
+  TS=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+  echo "[$TS] ($$ check-inbox) $*" >> "$_LOG_FILE" 2>/dev/null || true
+}
+
 # --- 2. Early exit for non-bridge sessions ---
 # If neither BRIDGE_SESSION_ID env nor .claude/bridge-session file exists, this
 # session has no bridge registration. Exit immediately with zero cost.
@@ -71,6 +81,11 @@ if [ -z "$MY_INBOX" ] || [ ! -d "$MY_INBOX" ]; then
     echo '{"continue": true}'
     exit 0
   fi
+fi
+
+# Resolve log file location once we know which session/inbox we belong to
+if [ -n "$MY_INBOX" ] && [ -d "$(dirname "$MY_INBOX")" ]; then
+  _LOG_FILE="$(dirname "$MY_INBOX")/bridge-listen.log"
 fi
 
 # --- Reset stop counter on UserPromptSubmit (default mode, no flags) ---
@@ -224,6 +239,7 @@ if [ -n "$MY_PROJECT_ID" ]; then
       MSG_BASENAME=$(basename "$MSG_FILE")
       CLAIMED_FILE="$INBOX/.claimed_${MSG_BASENAME}"
       mv "$MSG_FILE" "$CLAIMED_FILE" 2>/dev/null || continue  # Another process got it
+      _log "CLAIM id=$(jq -r .id "$CLAIMED_FILE" 2>/dev/null) type=$(jq -r .type "$CLAIMED_FILE" 2>/dev/null) from=$(jq -r .from "$CLAIMED_FILE" 2>/dev/null)"
 
       MSG_ID=$(jq -r '.id' "$CLAIMED_FILE")
       FROM_ID=$(jq -r '.from' "$CLAIMED_FILE")
@@ -307,6 +323,7 @@ else
       MSG_BASENAME=$(basename "$MSG_FILE")
       CLAIMED_FILE="$INBOX/.claimed_${MSG_BASENAME}"
       mv "$MSG_FILE" "$CLAIMED_FILE" 2>/dev/null || continue
+      _log "CLAIM id=$(jq -r .id "$CLAIMED_FILE" 2>/dev/null) type=$(jq -r .type "$CLAIMED_FILE" 2>/dev/null) from=$(jq -r .from "$CLAIMED_FILE" 2>/dev/null)"
 
       MSG_TYPE=$(jq -r '.type' "$CLAIMED_FILE")
       CONTENT=$(jq -r '.content' "$CLAIMED_FILE")
