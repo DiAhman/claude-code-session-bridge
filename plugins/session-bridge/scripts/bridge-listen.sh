@@ -131,21 +131,57 @@ while true; do
   for CLAIMED in "$INBOX"/.claimed_*.json; do
     [ -f "$CLAIMED" ] || continue
     CLAIM_MTIME=$(stat -c %Y "$CLAIMED" 2>/dev/null || stat -f %m "$CLAIMED" 2>/dev/null || echo "$CLAIM_NOW")
-    [ $((CLAIM_NOW - CLAIM_MTIME)) -lt 30 ] && continue  # Skip recent — probably still being processed
+    [ $((CLAIM_NOW - CLAIM_MTIME)) -lt 30 ] && continue
     ORIG_NAME=$(basename "$CLAIMED" | sed 's/^\.claimed_//')
     mv "$CLAIMED" "$INBOX/$ORIG_NAME" 2>/dev/null || true
   done
 
-  # Scan only THIS session's inbox
+  # ARM the watcher BEFORE scanning so events that fire during the scan
+  # are queued and surface as the next event. Closes the scan-then-watch
+  # startup race that previously could leave a fresh inbox file invisible
+  # until a *subsequent* unrelated event woke the listener.
+  INOTIFY_PID=""
+  FSWATCH_PID=""
+  WAIT_START=0
+  WAIT_REMAINING=0
+  case "$WATCHER" in
+    inotifywait)
+      if [ "$TIMEOUT" -gt 0 ]; then
+        WAIT_REMAINING=$((TIMEOUT - ELAPSED))
+      else
+        WAIT_REMAINING=300
+      fi
+      _log "WAIT inotifywait -t $WAIT_REMAINING pid=$$"
+      inotifywait -t "$WAIT_REMAINING" -e create "$INBOX" >/dev/null 2>&1 9>&- &
+      INOTIFY_PID=$!
+      echo "$INOTIFY_PID" > "$WATCHER_CHILD_FILE"
+      ;;
+    fswatch)
+      if [ "$TIMEOUT" -gt 0 ]; then
+        WAIT_REMAINING=$((TIMEOUT - ELAPSED))
+      else
+        WAIT_REMAINING=300
+      fi
+      WAIT_START=$(date +%s)
+      timeout "$WAIT_REMAINING" fswatch --one-event "$INBOX" >/dev/null 2>&1 9>&- &
+      FSWATCH_PID=$!
+      echo "$FSWATCH_PID" > "$WATCHER_CHILD_FILE"
+      ;;
+    poll)
+      : # No watcher to arm; scan + sleep below.
+      ;;
+  esac
+
+  # Scan inbox AFTER arming the watcher so any concurrent write either
+  # (a) is found by this scan or (b) wakes the armed watcher next loop.
   for MSG_FILE in "$INBOX"/*.json; do
     [ -f "$MSG_FILE" ] || continue
     STATUS=$(jq -r '.status' "$MSG_FILE" 2>/dev/null) || continue
     [ "$STATUS" = "pending" ] || continue
 
-    # Found a pending message — claim it atomically
     MSG_BASENAME=$(basename "$MSG_FILE")
     CLAIMED_FILE="$INBOX/.claimed_${MSG_BASENAME}"
-    mv "$MSG_FILE" "$CLAIMED_FILE" 2>/dev/null || continue  # Another process got it
+    mv "$MSG_FILE" "$CLAIMED_FILE" 2>/dev/null || continue
 
     MSG_ID=$(jq -r '.id' "$CLAIMED_FILE")
     FROM_ID=$(jq -r '.from' "$CLAIMED_FILE")
@@ -164,7 +200,17 @@ while true; do
 
     _log "MESSAGE id=$MSG_ID type=$MSG_TYPE from=$FROM_ID ($FROM_PROJECT)"
 
-    # Output message details for the agent FIRST, then delete
+    # Tear down the armed watcher before exiting so we don't leak a child.
+    if [ -n "$INOTIFY_PID" ] && kill -0 "$INOTIFY_PID" 2>/dev/null; then
+      kill "$INOTIFY_PID" 2>/dev/null || true
+      wait "$INOTIFY_PID" 2>/dev/null || true
+    fi
+    if [ -n "$FSWATCH_PID" ] && kill -0 "$FSWATCH_PID" 2>/dev/null; then
+      kill "$FSWATCH_PID" 2>/dev/null || true
+      wait "$FSWATCH_PID" 2>/dev/null || true
+    fi
+    rm -f "$WATCHER_CHILD_FILE" 2>/dev/null
+
     echo "BRIDGE_STATUS=delivered"
     echo "MESSAGE_ID=$MSG_ID"
     echo "FROM_ID=$FROM_ID"
@@ -175,9 +221,9 @@ while true; do
     echo "CONV_ID=$CONV_ID"
     echo "---"
     echo "$CONTENT"
-    # Archive AFTER output to prevent message loss on process death.
-    # Move into <inbox>/.delivered/ so cleanup.sh can prune in 24h. Fallback
-    # to rm -f if move fails so we don't leak claimed-but-undeleted files.
+
+    # Archive AFTER output so process death pre-output leaves the file
+    # recoverable by the orphan sweep (it stays as .claimed_*).
     _ARCHIVE_DIR="$INBOX/.delivered"
     _ORIG_NAME=$(basename "$CLAIMED_FILE" | sed 's/^\.claimed_//')
     mkdir -p "$_ARCHIVE_DIR" 2>/dev/null
@@ -187,20 +233,9 @@ while true; do
     exit 0
   done
 
-  # Wait for new files using the best available method
+  # No message delivered this iteration — wait on the armed watcher (or sleep for poll).
   case "$WATCHER" in
     inotifywait)
-      if [ "$TIMEOUT" -gt 0 ]; then
-        REMAINING=$((TIMEOUT - ELAPSED))
-      else
-        REMAINING=300  # 5-min blocks; loop re-checks inbox + directory existence between cycles
-      fi
-      # Run inotifywait in background so we can track its PID for cleanup.
-      # Close fd 9 (flock) so the child doesn't inherit the lock.
-      _log "WAIT inotifywait -t $REMAINING pid=$$"
-      inotifywait -t "$REMAINING" -e create "$INBOX" >/dev/null 2>&1 9>&- &
-      INOTIFY_PID=$!
-      echo "$INOTIFY_PID" > "$WATCHER_CHILD_FILE"
       WATCH_RC=0
       wait "$INOTIFY_PID" 2>/dev/null || WATCH_RC=$?
       rm -f "$WATCHER_CHILD_FILE" 2>/dev/null
@@ -210,9 +245,8 @@ while true; do
           ELAPSED=$((ELAPSED + 1))
           ;;
         2)
-          _log "POLL timeout after ${REMAINING}s, re-checking"
-          ELAPSED=$((ELAPSED + REMAINING))
-          continue
+          _log "POLL timeout after ${WAIT_REMAINING}s, re-checking"
+          ELAPSED=$((ELAPSED + WAIT_REMAINING))
           ;;
         *)
           _log "ERROR inotifywait rc=$WATCH_RC"
@@ -227,22 +261,12 @@ while true; do
       esac
       ;;
     fswatch)
-      if [ "$TIMEOUT" -gt 0 ]; then
-        REMAINING=$((TIMEOUT - ELAPSED))
-      else
-        REMAINING=300  # 5-min blocks; loop re-checks between cycles
-      fi
-      START_WAIT=$(date +%s)
-      timeout "$REMAINING" fswatch --one-event "$INBOX" >/dev/null 2>&1 9>&- &
-      FSWATCH_PID=$!
-      echo "$FSWATCH_PID" > "$WATCHER_CHILD_FILE"
       WATCH_RC=0
       wait "$FSWATCH_PID" 2>/dev/null || WATCH_RC=$?
       rm -f "$WATCHER_CHILD_FILE" 2>/dev/null
-      END_WAIT=$(date +%s)
-      WAIT_DURATION=$((END_WAIT - START_WAIT))
+      WAIT_END=$(date +%s)
+      WAIT_DURATION=$((WAIT_END - WAIT_START))
       if [ "$WATCH_RC" -ne 0 ] && [ "$WAIT_DURATION" -lt 2 ]; then
-        # fswatch crashed immediately — back off to prevent CPU spin
         _log "ERROR fswatch rc=$WATCH_RC duration=${WAIT_DURATION}s"
         if [ ! -d "$INBOX" ]; then
           _log "FATAL inbox directory gone"

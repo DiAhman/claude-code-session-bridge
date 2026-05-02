@@ -159,4 +159,23 @@ echo "Test S3: emits BRIDGE_STATUS=timeout on timeout with empty inbox"
 TIMEOUT_OUTPUT=$(BRIDGE_DIR="$BRIDGE_DIR" bash "$LISTEN" "$SESSION_B" 2 2>/dev/null || true)
 assert_eq "timed-out listener reports timeout" "BRIDGE_STATUS=timeout" "$TIMEOUT_OUTPUT"
 
+# --- Test R1: Pre-existing message delivered immediately on listener start ---
+echo ""
+echo "Test R1: Pre-existing inbox message picked up on first scan"
+# Send a message BEFORE starting the listener — the file is already in inbox
+BRIDGE_DIR="$BRIDGE_DIR" BRIDGE_SESSION_ID="$SESSION_A" bash "$SEND_MSG" "$SESSION_B" query "race-pre-existing" > /dev/null
+OUTPUT=$(BRIDGE_DIR="$BRIDGE_DIR" bash "$LISTEN" "$SESSION_B" 5)
+assert_contains "delivers pre-existing message" "race-pre-existing" "$OUTPUT"
+
+# --- Test R2: Listener loop iterates correctly after a delivery (re-scan picks up next) ---
+echo ""
+echo "Test R2: Two messages in rapid succession both deliver across two listener invocations"
+BRIDGE_DIR="$BRIDGE_DIR" BRIDGE_SESSION_ID="$SESSION_A" bash "$SEND_MSG" "$SESSION_B" query "race-burst-1" > /dev/null
+BRIDGE_DIR="$BRIDGE_DIR" BRIDGE_SESSION_ID="$SESSION_A" bash "$SEND_MSG" "$SESSION_B" query "race-burst-2" > /dev/null
+OUTPUT1=$(BRIDGE_DIR="$BRIDGE_DIR" bash "$LISTEN" "$SESSION_B" 5)
+OUTPUT2=$(BRIDGE_DIR="$BRIDGE_DIR" bash "$LISTEN" "$SESSION_B" 5)
+COMBINED="$OUTPUT1$OUTPUT2"
+assert_contains "first burst message delivered" "race-burst-1" "$COMBINED"
+assert_contains "second burst message delivered" "race-burst-2" "$COMBINED"
+
 print_results
