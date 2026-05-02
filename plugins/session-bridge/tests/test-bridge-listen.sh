@@ -39,11 +39,13 @@ else
   echo "  FAIL: missing separator"; FAIL=$((FAIL + 1))
 fi
 
-# --- Test 2: Message deleted after pickup ---
+# --- Test 2: Message archived (not deleted) after pickup ---
 echo ""
-echo "Test 2: Message deleted from inbox after pickup"
-MSG_COUNT=$(find "$BRIDGE_DIR/sessions/$SESSION_B/inbox" -name "*.json" 2>/dev/null | wc -l)
-assert_eq "inbox empty after pickup" "0" "$MSG_COUNT"
+echo "Test 2: Message archived to .delivered/ after pickup"
+MSG_COUNT=$(find "$BRIDGE_DIR/sessions/$SESSION_B/inbox" -maxdepth 1 -name "*.json" 2>/dev/null | wc -l)
+assert_eq "no messages at top of inbox" "0" "$MSG_COUNT"
+ARCHIVE_COUNT=$(find "$BRIDGE_DIR/sessions/$SESSION_B/inbox/.delivered" -name "*.json" 2>/dev/null | wc -l)
+assert_eq "one message in .delivered/" "1" "$ARCHIVE_COUNT"
 
 # --- Test 3: No messages to re-deliver ---
 echo ""

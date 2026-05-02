@@ -175,8 +175,15 @@ while true; do
     echo "CONV_ID=$CONV_ID"
     echo "---"
     echo "$CONTENT"
-    # Delete AFTER output to prevent message loss on process death
-    rm -f "$CLAIMED_FILE" 2>/dev/null || true
+    # Archive AFTER output to prevent message loss on process death.
+    # Move into <inbox>/.delivered/ so cleanup.sh can prune in 24h. Fallback
+    # to rm -f if move fails so we don't leak claimed-but-undeleted files.
+    _ARCHIVE_DIR="$INBOX/.delivered"
+    _ORIG_NAME=$(basename "$CLAIMED_FILE" | sed 's/^\.claimed_//')
+    mkdir -p "$_ARCHIVE_DIR" 2>/dev/null
+    if ! mv "$CLAIMED_FILE" "$_ARCHIVE_DIR/$_ORIG_NAME" 2>/dev/null; then
+      rm -f "$CLAIMED_FILE" 2>/dev/null || true
+    fi
     exit 0
   done
 
