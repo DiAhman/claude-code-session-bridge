@@ -6,7 +6,7 @@ Fork of `PatilShreyas/claude-code-session-bridge` — peer-to-peer communication
 
 ```
 plugins/session-bridge/
-  .claude-plugin/plugin.json     # Plugin manifest (currently v0.2.21)
+  .claude-plugin/plugin.json     # Plugin manifest (currently v0.2.22)
   commands/bridge.md             # /bridge command definition
   hooks/hooks.json               # SessionStart, UserPromptSubmit, PostToolUse, PreCompact, Stop, SessionEnd hooks
   skills/bridge-awareness/SKILL.md  # Agent behavior skill
@@ -57,7 +57,7 @@ Runtime data lives at `~/.claude/session-bridge/` (not in the repo). Tests overr
 
 ## Bidirectional Bridge v2 (shipped)
 
-The bidirectional, project-scoped, autonomous multi-session orchestration system is implemented and stable as of v0.2.21. Protocol version: **2.0**.
+The bidirectional, project-scoped, autonomous multi-session orchestration system is implemented and stable as of v0.2.22. Protocol version: **2.0**.
 
 - **Spec** (historical): `docs/superpowers/specs/2026-03-19-bidirectional-bridge-design.md`
 - **Plan** (historical): `docs/superpowers/plans/2026-03-19-bidirectional-bridge.md`
@@ -75,6 +75,7 @@ The bidirectional, project-scoped, autonomous multi-session orchestration system
 - **Standby concurrency**: `flock` ensures only one listener per session; `BRIDGE_STATUS=` markers (delivered / already_running / timeout) let the agent reason about listener state without spurious relaunches
 - **Visibility lines**: agents emit `← <type> from <project>: <one-sentence summary>` then `→ standby` after each handled message — keeps the transcript readable during bursts
 - **Human-in-the-loop**: `human-input-needed` messages with `proposedDefault` and `blocksWork`
+- **Delivery audit**: every claimed message is archived to `<inbox>/.delivered/` (pruned after 24h by `cleanup.sh`); both `bridge-listen.sh` and `check-inbox.sh` write CLAIM/OUTPUT/RESTORE entries to a shared `bridge-listen.log`, so silent message loss is recoverable + diagnosable
 
 ### v2 Backward Compatibility
 
