@@ -93,14 +93,15 @@ if [ -n "$SENDER_PROJECT_ID" ] && [ "$MSG_TYPE" != "recipient-stale" ]; then
   TARGET_DIR="$BRIDGE_DIR/projects/$SENDER_PROJECT_ID/sessions/$TARGET_ID"
   if [ -d "$TARGET_DIR" ] && is_stale "$TARGET_DIR" "$STALE_THRESHOLD_SEC"; then
     RECIPIENT_STALE_DETECTED=true
-    RECIPIENT_STALE_HEARTBEAT=$(cat "$TARGET_DIR/heartbeat" 2>/dev/null | head -1 || echo "unknown")
+    RECIPIENT_STALE_HEARTBEAT=$(head -1 "$TARGET_DIR/heartbeat" 2>/dev/null || true)
+    [ -z "$RECIPIENT_STALE_HEARTBEAT" ] && RECIPIENT_STALE_HEARTBEAT="unknown"
     RECIPIENT_NAME=$(jq -r '.projectName // "unknown"' "$TARGET_DIR/manifest.json" 2>/dev/null)
     set_status "$TARGET_DIR/manifest.json" "stale"
   fi
 fi
 
 # --- Conversation management (project-scoped sessions only) ---
-CONV_FREE_TYPES=" ping session-ended routing-query "
+CONV_FREE_TYPES=" ping session-ended routing-query recipient-stale session-removed "
 CONV_CREATE_TYPES=" task-assign escalate "
 
 if [[ "$CONV_FREE_TYPES" == *" $MSG_TYPE "* ]]; then

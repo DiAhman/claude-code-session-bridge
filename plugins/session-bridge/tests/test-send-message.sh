@@ -229,27 +229,28 @@ else
   echo "  FAIL: no recipient-stale notification in sender inbox"; FAIL=$((FAIL + 1))
 fi
 
-# --- Test SM-S3: recipient-stale type is accepted by validation ---
+# --- Test SM-S3: recipient-stale and session-removed are sendable types ---
 echo ""
-echo "Test SM-S3: recipient-stale and session-removed pass type validation"
-# Reset target to active so we can send to it
+echo "Test SM-S3: recipient-stale and session-removed can be sent manually"
+# Reset target to active so the synthetic recipient-stale notification doesn't fire
 TMP=$(mktemp "$TARGET_DIR/manifest.XXXXXX")
 jq '.status = "active"' "$TARGET_DIR/manifest.json" > "$TMP" && mv "$TMP" "$TARGET_DIR/manifest.json"
 echo "$(date -u +"%Y-%m-%dT%H:%M:%SZ")" > "$TARGET_DIR/heartbeat"
-# Sending a recipient-stale message manually should not error on type validation
-OUT=$(BRIDGE_DIR="$S_BRIDGE" BRIDGE_SESSION_ID="$S_SENDER_ID" \
-  bash "$SEND_MSG" "$S_TARGET_ID" recipient-stale "manual test" 2>&1 || true)
-if echo "$OUT" | grep -q "Unknown message type"; then
-  echo "  FAIL: recipient-stale rejected by type validation"; FAIL=$((FAIL + 1))
+# After CONV_FREE_TYPES fix, both types should send successfully without --conversation
+RST_ID=$(BRIDGE_DIR="$S_BRIDGE" BRIDGE_SESSION_ID="$S_SENDER_ID" \
+  bash "$SEND_MSG" "$S_TARGET_ID" recipient-stale "manual stale test" 2>&1)
+if [ -n "$RST_ID" ] && [ -f "$TARGET_DIR/inbox/$RST_ID.json" ]; then
+  echo "  PASS: recipient-stale send delivers"; PASS=$((PASS + 1))
 else
-  echo "  PASS: recipient-stale accepted"; PASS=$((PASS + 1))
+  echo "  FAIL: recipient-stale send did not deliver (id=$RST_ID)"; FAIL=$((FAIL + 1))
 fi
-OUT=$(BRIDGE_DIR="$S_BRIDGE" BRIDGE_SESSION_ID="$S_SENDER_ID" \
-  bash "$SEND_MSG" "$S_TARGET_ID" session-removed "manual test" 2>&1 || true)
-if echo "$OUT" | grep -q "Unknown message type"; then
-  echo "  FAIL: session-removed rejected"; FAIL=$((FAIL + 1))
+
+SREM_ID=$(BRIDGE_DIR="$S_BRIDGE" BRIDGE_SESSION_ID="$S_SENDER_ID" \
+  bash "$SEND_MSG" "$S_TARGET_ID" session-removed "manual remove test" 2>&1)
+if [ -n "$SREM_ID" ] && [ -f "$TARGET_DIR/inbox/$SREM_ID.json" ]; then
+  echo "  PASS: session-removed send delivers"; PASS=$((PASS + 1))
 else
-  echo "  PASS: session-removed accepted"; PASS=$((PASS + 1))
+  echo "  FAIL: session-removed send did not deliver (id=$SREM_ID)"; FAIL=$((FAIL + 1))
 fi
 
 # Cleanup
