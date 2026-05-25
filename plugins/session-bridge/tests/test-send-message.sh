@@ -166,4 +166,93 @@ assert_json_field "fromRole set" "$V2_MSG_FILE" '.metadata.fromRole' "specialist
 # Cleanup
 rm -rf "$V2_TMPDIR"
 
+echo ""
+echo "--- Stale-recipient detection tests ---"
+
+# Setup project for stale-recipient tests (fresh — avoids v2 conversation state)
+S_TMPDIR=$(mktemp -d)
+S_BRIDGE="$S_TMPDIR/bridge"
+S_PROJ_A="$S_TMPDIR/sender-proj"
+S_PROJ_B="$S_TMPDIR/target-proj"
+mkdir -p "$S_PROJ_A" "$S_PROJ_B"
+
+PROJECT_NAME="stale-proj"
+BRIDGE_DIR="$S_BRIDGE" bash "$PLUGIN_DIR/scripts/project-create.sh" "$PROJECT_NAME" > /dev/null
+S_SENDER_ID=$(BRIDGE_DIR="$S_BRIDGE" PROJECT_DIR="$S_PROJ_A" bash "$PLUGIN_DIR/scripts/project-join.sh" "$PROJECT_NAME" --role specialist --specialty "sender")
+S_TARGET_ID=$(BRIDGE_DIR="$S_BRIDGE" PROJECT_DIR="$S_PROJ_B" bash "$PLUGIN_DIR/scripts/project-join.sh" "$PROJECT_NAME" --role specialist --specialty "target")
+
+# Stop heartbeat daemons so we can control freshness manually
+for SID in "$S_SENDER_ID" "$S_TARGET_ID"; do
+  PID_FILE="$S_BRIDGE/projects/$PROJECT_NAME/sessions/$SID/heartbeat-daemon.pid"
+  if [ -f "$PID_FILE" ]; then
+    DPID=$(cat "$PID_FILE" 2>/dev/null || echo "")
+    [ -n "$DPID" ] && kill "$DPID" 2>/dev/null || true
+  fi
+done
+
+# --- Test SM-S1: send to active recipient — no stale notification ---
+echo ""
+echo "Test SM-S1: send to active recipient does not generate recipient-stale"
+# Ensure target has a fresh heartbeat
+echo "$(date -u +"%Y-%m-%dT%H:%M:%SZ")" > "$S_BRIDGE/projects/$PROJECT_NAME/sessions/$S_TARGET_ID/heartbeat"
+MSG_ID_S1=$(BRIDGE_DIR="$S_BRIDGE" BRIDGE_SESSION_ID="$S_SENDER_ID" \
+  bash "$SEND_MSG" "$S_TARGET_ID" query "hello fresh" 2>/dev/null)
+# Sender inbox should NOT have a recipient-stale notification
+NOTIF_COUNT=$(find "$S_BRIDGE/projects/$PROJECT_NAME/sessions/$S_SENDER_ID/inbox" \
+  -maxdepth 1 -name "*.json" -exec grep -lE '"type"[[:space:]]*:[[:space:]]*"recipient-stale"' {} \; 2>/dev/null | wc -l)
+assert_eq "no recipient-stale for fresh recipient" "0" "$NOTIF_COUNT"
+
+# --- Test SM-S2: send to stale recipient → still delivers, emits recipient-stale ---
+echo ""
+echo "Test SM-S2: send to stale recipient delivers + emits recipient-stale"
+# Force recipient into stale-detectable state:
+# Status=active, no heartbeat file, no daemon PID file
+TARGET_DIR="$S_BRIDGE/projects/$PROJECT_NAME/sessions/$S_TARGET_ID"
+TMP=$(mktemp "$TARGET_DIR/manifest.XXXXXX")
+jq '.status = "active"' "$TARGET_DIR/manifest.json" > "$TMP" && mv "$TMP" "$TARGET_DIR/manifest.json"
+rm -f "$TARGET_DIR/heartbeat" "$TARGET_DIR/heartbeat-daemon.pid"
+
+MSG_ID_S2=$(BRIDGE_DIR="$S_BRIDGE" BRIDGE_SESSION_ID="$S_SENDER_ID" \
+  bash "$SEND_MSG" "$S_TARGET_ID" query "to stale recipient" 2>/dev/null)
+# Original message DID land in recipient's inbox
+ORIG_IN_TARGET=$(find "$TARGET_DIR/inbox" -maxdepth 1 -name "$MSG_ID_S2.json" 2>/dev/null | wc -l)
+assert_eq "original message delivered to recipient inbox" "1" "$ORIG_IN_TARGET"
+# Recipient status was flipped to stale
+assert_json_field "recipient flipped to stale" "$TARGET_DIR/manifest.json" ".status" "stale"
+# Sender got a recipient-stale notification back
+NOTIF=$(find "$S_BRIDGE/projects/$PROJECT_NAME/sessions/$S_SENDER_ID/inbox" \
+  -maxdepth 1 -name "*.json" -exec grep -lE '"type"[[:space:]]*:[[:space:]]*"recipient-stale"' {} \; 2>/dev/null | head -1)
+if [ -n "$NOTIF" ]; then
+  echo "  PASS: sender received recipient-stale notification"; PASS=$((PASS + 1))
+  assert_contains "notification mentions stale recipient id" "$S_TARGET_ID" "$(cat "$NOTIF")"
+else
+  echo "  FAIL: no recipient-stale notification in sender inbox"; FAIL=$((FAIL + 1))
+fi
+
+# --- Test SM-S3: recipient-stale type is accepted by validation ---
+echo ""
+echo "Test SM-S3: recipient-stale and session-removed pass type validation"
+# Reset target to active so we can send to it
+TMP=$(mktemp "$TARGET_DIR/manifest.XXXXXX")
+jq '.status = "active"' "$TARGET_DIR/manifest.json" > "$TMP" && mv "$TMP" "$TARGET_DIR/manifest.json"
+echo "$(date -u +"%Y-%m-%dT%H:%M:%SZ")" > "$TARGET_DIR/heartbeat"
+# Sending a recipient-stale message manually should not error on type validation
+OUT=$(BRIDGE_DIR="$S_BRIDGE" BRIDGE_SESSION_ID="$S_SENDER_ID" \
+  bash "$SEND_MSG" "$S_TARGET_ID" recipient-stale "manual test" 2>&1 || true)
+if echo "$OUT" | grep -q "Unknown message type"; then
+  echo "  FAIL: recipient-stale rejected by type validation"; FAIL=$((FAIL + 1))
+else
+  echo "  PASS: recipient-stale accepted"; PASS=$((PASS + 1))
+fi
+OUT=$(BRIDGE_DIR="$S_BRIDGE" BRIDGE_SESSION_ID="$S_SENDER_ID" \
+  bash "$SEND_MSG" "$S_TARGET_ID" session-removed "manual test" 2>&1 || true)
+if echo "$OUT" | grep -q "Unknown message type"; then
+  echo "  FAIL: session-removed rejected"; FAIL=$((FAIL + 1))
+else
+  echo "  PASS: session-removed accepted"; PASS=$((PASS + 1))
+fi
+
+# Cleanup
+rm -rf "$S_TMPDIR"
+
 print_results

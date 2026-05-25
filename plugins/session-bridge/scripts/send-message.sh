@@ -13,10 +13,10 @@ CONTENT="$3"
 shift 3
 
 # Validate message type
-VALID_TYPES=" ping query response task-assign task-update task-complete task-cancel escalate task-redirect human-input-needed human-response routing-query session-ended "
+VALID_TYPES=" ping query response task-assign task-update task-complete task-cancel escalate task-redirect human-input-needed human-response routing-query session-ended session-removed recipient-stale "
 if [[ "$VALID_TYPES" != *" $MSG_TYPE "* ]]; then
   echo "Error: Unknown message type '$MSG_TYPE'." >&2
-  echo "Valid types: ping query response task-assign task-update task-complete task-cancel escalate task-redirect human-input-needed human-response routing-query session-ended" >&2
+  echo "Valid types: ping query response task-assign task-update task-complete task-cancel escalate task-redirect human-input-needed human-response routing-query session-ended session-removed recipient-stale" >&2
   exit 1
 fi
 
@@ -43,6 +43,8 @@ done
 BRIDGE_DIR="${BRIDGE_DIR:-$HOME/.claude/session-bridge}"
 SENDER_ID="${BRIDGE_SESSION_ID:?BRIDGE_SESSION_ID must be set}"
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+# shellcheck source=lib/stale-check.sh
+source "$SCRIPT_DIR/lib/stale-check.sh"
 
 # --- Path resolution: find sender's project (if any) ---
 SENDER_PROJECT_ID=""
@@ -73,6 +75,28 @@ fi
 if [ ! -d "$TARGET_INBOX" ]; then
   echo "Error: Target session $TARGET_ID not found" >&2
   exit 1
+fi
+
+# --- Stale-recipient detection ---
+# If recipient is stale at delivery time, flip its status, deliver the message
+# normally (it queues in the inbox), and remember to emit a recipient-stale
+# notification back to the sender after the main send completes.
+RECIPIENT_STALE_DETECTED=false
+RECIPIENT_STALE_HEARTBEAT=""
+RECIPIENT_NAME="unknown"
+STALE_THRESHOLD_SEC="${BRIDGE_STALE_THRESHOLD:-300}"
+
+# Only check stale-ness when delivering to project-scoped session
+# (legacy sessions don't have the new heartbeat plumbing)
+# Also skip self-emitted recipient-stale messages to prevent feedback loops
+if [ -n "$SENDER_PROJECT_ID" ] && [ "$MSG_TYPE" != "recipient-stale" ]; then
+  TARGET_DIR="$BRIDGE_DIR/projects/$SENDER_PROJECT_ID/sessions/$TARGET_ID"
+  if [ -d "$TARGET_DIR" ] && is_stale "$TARGET_DIR" "$STALE_THRESHOLD_SEC"; then
+    RECIPIENT_STALE_DETECTED=true
+    RECIPIENT_STALE_HEARTBEAT=$(cat "$TARGET_DIR/heartbeat" 2>/dev/null | head -1 || echo "unknown")
+    RECIPIENT_NAME=$(jq -r '.projectName // "unknown"' "$TARGET_DIR/manifest.json" 2>/dev/null)
+    set_status "$TARGET_DIR/manifest.json" "stale"
+  fi
 fi
 
 # --- Conversation management (project-scoped sessions only) ---
@@ -189,6 +213,54 @@ if [ -d "$SENDER_OUTBOX" ]; then
   TMP_FILE=$(mktemp "$SENDER_OUTBOX/$MSG_ID.XXXXXX")
   echo "$OUTBOX_JSON" > "$TMP_FILE"
   mv "$TMP_FILE" "$SENDER_OUTBOX/$MSG_ID.json" || { echo "Warning: outbox write failed for $MSG_ID" >&2; rm -f "$TMP_FILE"; }
+fi
+
+# --- Emit recipient-stale notification back to sender if needed ---
+if [ "$RECIPIENT_STALE_DETECTED" = true ]; then
+  NOTIF_ID="msg-$(set +o pipefail; LC_ALL=C tr -dc 'a-z0-9' < /dev/urandom | head -c 12)"
+  NOTIF_NOW=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+  NOTIF_CONTENT="Recipient $RECIPIENT_NAME ($TARGET_ID) is unresponsive. Last heartbeat: ${RECIPIENT_STALE_HEARTBEAT}. Message $MSG_ID was still delivered to recipient's inbox — it will be processed when the session revives. You may want to nudge the user to reopen the session."
+  SENDER_INBOX="$BRIDGE_DIR/projects/$SENDER_PROJECT_ID/sessions/$SENDER_ID/inbox"
+  if [ -d "$SENDER_INBOX" ]; then
+    NOTIF_JSON=$(jq -n \
+      --arg pv "2.0" \
+      --arg id "$NOTIF_ID" \
+      --arg from "$TARGET_ID" \
+      --arg to "$SENDER_ID" \
+      --arg type "recipient-stale" \
+      --arg ts "$NOTIF_NOW" \
+      --arg content "$NOTIF_CONTENT" \
+      --arg fromProject "$SENDER_PROJECT" \
+      --arg origMsg "$MSG_ID" \
+      --arg staleId "$TARGET_ID" \
+      --arg staleName "$RECIPIENT_NAME" \
+      --arg lastHb "$RECIPIENT_STALE_HEARTBEAT" \
+      --arg staleSince "$NOTIF_NOW" \
+      '{
+        protocolVersion: $pv,
+        id: $id,
+        conversationId: null,
+        from: $from,
+        to: $to,
+        type: $type,
+        timestamp: $ts,
+        status: "pending",
+        content: $content,
+        inReplyTo: null,
+        metadata: {
+          urgency: "normal",
+          fromProject: $fromProject,
+          originalMessageId: $origMsg,
+          staleRecipientId: $staleId,
+          staleRecipientName: $staleName,
+          lastHeartbeat: $lastHb,
+          staleSince: $staleSince
+        }
+      }')
+    NOTIF_TMP=$(mktemp "$SENDER_INBOX/$NOTIF_ID.XXXXXX")
+    echo "$NOTIF_JSON" > "$NOTIF_TMP"
+    mv "$NOTIF_TMP" "$SENDER_INBOX/$NOTIF_ID.json" || rm -f "$NOTIF_TMP"
+  fi
 fi
 
 echo -n "$MSG_ID"
