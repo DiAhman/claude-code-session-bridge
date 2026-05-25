@@ -38,10 +38,10 @@ is_producer_alive() {
   # Defensive: verify the PID is actually our heartbeat-daemon (guards against PID reuse)
   if [ -r "/proc/$PID/cmdline" ]; then
     # Linux: read /proc/<pid>/cmdline (null-separated)
-    tr '\0' ' ' < "/proc/$PID/cmdline" 2>/dev/null | grep -q "heartbeat-daemon\.sh"
+    { tr '\0' ' ' < "/proc/$PID/cmdline"; } 2>/dev/null | grep -qE "(^|/| )heartbeat-daemon\.sh( |$)"
   else
     # macOS: use ps
-    ps -p "$PID" -o command= 2>/dev/null | grep -q "heartbeat-daemon\.sh"
+    ps -p "$PID" -o command= 2>/dev/null | grep -qE "(^|/| )heartbeat-daemon\.sh( |$)"
   fi
 }
 
