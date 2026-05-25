@@ -67,7 +67,10 @@ if [ -f "$WATCHER_PID_FILE" ]; then
   fi
 fi
 
-# Step 4: kill listener (bridge-listen.sh) if still in background
+# Step 4: kill any active inotifywait/fswatch child of bridge-listen.sh.
+# The PID file holds the watcher child's PID (set by bridge-listen.sh, not
+# the parent script's PID). Killing the watcher causes the parent's `wait`
+# to return, allowing it to exit naturally on the next loop iteration.
 LISTENER_PID_FILE="$SESSION_DIR/bridge-listen-child.pid"
 if [ -f "$LISTENER_PID_FILE" ]; then
   L_PID=$(cat "$LISTENER_PID_FILE" 2>/dev/null || echo "")
