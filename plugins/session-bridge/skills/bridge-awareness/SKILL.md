@@ -111,6 +111,8 @@ Summary rules:
 - **One sentence, under 20 words.** Describe the content ("finished migration X", "blocked on Y", "ready to merge Z"), not the mechanics ("received a message about…").
 - For `ping` and `session-ended`: omit the summary colon and message entirely, just emit `← ping from …` or `← session-ended from …`.
 - For `query` and `human-input-needed`: prefix the arrow with `⚠` so the user spots it in scrollback: `⚠← query from …: <summary>`.
+- For `recipient-stale`: use the `⚠` warning form on its own line (no `←` arrow): `⚠ recipient-stale: <name> (<id>) unresponsive since <last-heartbeat> — <msg-id> queued, may need user nudge`.
+- For `session-removed`: use the standard `←` form with reason as the summary: `← session-removed from <name> (<id>): <reason>`.
 - For `already_running` or `timeout`: emit nothing. Silence is correct.
 
 Examples:
@@ -209,7 +211,16 @@ for MANIFEST in "$BRIDGE_DIR/projects/$PROJECT_ID/sessions"/*/manifest.json; do
 done
 ```
 
-Pick the peer whose specialty best matches your need. Prefer `active` or `idle` peers over `offline` ones.
+Pick the peer whose specialty best matches your need. Prefer `active` peers over `offline` ones; avoid `stale` peers (their messages will queue but won't be processed until the user reopens the session); never address `removed` peers (terminal — they're gone).
+
+#### Session Status Vocabulary (four-state lifecycle)
+
+Every peer manifest carries one of these `status` values:
+
+- **`active`** — runtime is live, heartbeat is fresh. Safe to route messages here; they will be picked up promptly.
+- **`offline`** — clean voluntary exit (via `/bridge close` or SessionEnd hook). Heartbeat absence is expected. Session directory and inbox are preserved; the peer may revive later with the same session ID. Messages queue and deliver on revive.
+- **`stale`** — was supposed to be active but the heartbeat producer died unexpectedly (crash, kill, terminal closed without clean shutdown). Messages still land in the inbox, but the peer is **not** processing them. If you send to a `stale` peer, the bridge will emit a `recipient-stale` notification back to you.
+- **`removed`** — explicitly removed from the project (`/bridge remove <id>`). Terminal — that session ID is gone for good. Any open conversations initiated by the removed session are auto-resolved with reason "Session removed".
 
 ### Step 3: Ask the Orchestrator
 
@@ -428,6 +439,30 @@ BRIDGE_SESSION_ID="$MY_SESSION" bash "${CLAUDE_PLUGIN_ROOT}/scripts/send-message
   "$FROM_ID" ping "connected"
 ```
 
+### session-ended
+
+A peer voluntarily went offline (clean exit via `/bridge close` or SessionEnd hook). Their session directory and inbox are preserved — they may resume later with a new runtime but the same identity. No action required beyond noting their absence. Any in-flight conversations addressed to them will queue in their inbox and be delivered when they revive.
+
+### recipient-stale
+
+A peer you sent a message to is unresponsive — their heartbeat producer died unexpectedly, so they are `stale` rather than cleanly `offline`. The message DID land in their inbox; they'll see it when they revive. Surface this with a warning visibility line:
+
+```
+⚠ recipient-stale: <name> (<session-id>) unresponsive since <last-heartbeat> — <original-message-id> queued, may need user nudge
+```
+
+The notification metadata carries `staleRecipientId`, `staleRecipientName`, `lastHeartbeat`, and `originalMessageId` for context. Do **not** auto-retry, auto-reroute, or auto-escalate. Just surface the state. The user may decide to nudge the specialist (reopen the session) or wait it out.
+
+### session-removed
+
+A peer has been removed from the project (terminal — they're gone for good, not just offline). Surface with:
+
+```
+← session-removed from <name> (<session-id>): <reason>
+```
+
+Update your internal roster — that session ID is dead. Any conversations addressed to it should be considered abandoned. If you need that specialty back in the project, the user must run `/bridge project join` again to register a new session.
+
 ---
 
 ## Decision Point: Block or Continue?
@@ -442,7 +477,7 @@ When you send a query or escalation and are waiting for a response, ask yourself
   ```bash
   RESPONSE=$(bash "${CLAUDE_PLUGIN_ROOT}/scripts/bridge-receive.sh" "$MY_SESSION" "$MSG_ID" 90)
   ```
-  If it times out after 90 seconds, check if the peer is still active. If so, re-enter standby — the response will arrive eventually. If the peer is offline, consider escalating to another peer or the orchestrator.
+  If it times out after 90 seconds, check the peer's status. If `active`, re-enter standby — the response will arrive eventually. If `offline` (clean exit, may revive), re-enter standby; their inbox is preserved. If `stale` (heartbeat dead, unresponsive) or `removed` (terminal), consider escalating to another peer or the orchestrator — you'll also receive a `recipient-stale` notification if you sent to a stale peer.
 
 ---
 
@@ -629,13 +664,13 @@ ORCH_MANIFEST="$BRIDGE_DIR/projects/$PROJECT_ID/sessions/$ORCHESTRATOR_ID/manife
 LAST_HB=$(jq -r '.lastHeartbeat' "$ORCH_MANIFEST")
 ```
 
-If the orchestrator's `lastHeartbeat` is older than 5 minutes:
+If the orchestrator's `lastHeartbeat` is older than 5 minutes (status is likely `stale` or `offline`):
 
 1. **Pause non-critical work.** Don't pick up new tasks.
 2. **Continue in-progress work** that doesn't require orchestrator interaction.
-3. **Queue `task-complete` messages** — don't send them to a dead session.
-4. **Print a notification:** "Orchestrator appears offline. Pausing task reporting. Current work saved."
-5. **Wait for recovery.** When the orchestrator re-joins (heartbeat resumes), flush queued messages.
+3. **Queue `task-complete` messages** — sending them now will land in their inbox; if `stale` you'll also receive a `recipient-stale` notification (informational, no action needed beyond the visibility line).
+4. **Print a notification:** "Orchestrator unresponsive (status: stale/offline). Pausing task reporting. Current work saved."
+5. **Wait for recovery.** When the orchestrator revives (status returns to `active`, heartbeat resumes), queued messages in their inbox will be delivered automatically.
 
 Do **not** promote yourself to orchestrator. Wait for the user to restart the orchestrator session.
 
