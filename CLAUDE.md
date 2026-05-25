@@ -6,12 +6,12 @@ Fork of `PatilShreyas/claude-code-session-bridge` — peer-to-peer communication
 
 ```
 plugins/session-bridge/
-  .claude-plugin/plugin.json     # Plugin manifest (currently v0.2.22)
+  .claude-plugin/plugin.json     # Plugin manifest (currently v0.3.0)
   commands/bridge.md             # /bridge command definition
   hooks/hooks.json               # SessionStart, UserPromptSubmit, PostToolUse, PreCompact, Stop, SessionEnd hooks
   skills/bridge-awareness/SKILL.md  # Agent behavior skill
-  scripts/                       # Core bash scripts (18 scripts, ~1985 lines)
-  tests/                         # Test suite (22 test files, ~2773 lines, 353 tests)
+  scripts/                       # Core bash scripts (22 scripts + lib/stale-check.sh)
+  tests/                         # Test suite (26 test files, 398 tests)
   test.sh                        # Test runner
 ```
 
@@ -57,7 +57,7 @@ Runtime data lives at `~/.claude/session-bridge/` (not in the repo). Tests overr
 
 ## Bidirectional Bridge v2 (shipped)
 
-The bidirectional, project-scoped, autonomous multi-session orchestration system is implemented and stable as of v0.2.22. Protocol version: **2.0**.
+The bidirectional, project-scoped, autonomous multi-session orchestration system is implemented and stable as of v0.3.0. Protocol version: **2.0**.
 
 - **Spec** (historical): `docs/superpowers/specs/2026-03-19-bidirectional-bridge-design.md`
 - **Plan** (historical): `docs/superpowers/plans/2026-03-19-bidirectional-bridge.md`
@@ -75,7 +75,10 @@ The bidirectional, project-scoped, autonomous multi-session orchestration system
 - **Standby concurrency**: `flock` ensures only one listener per session; `BRIDGE_STATUS=` markers (delivered / already_running / timeout) let the agent reason about listener state without spurious relaunches
 - **Visibility lines**: agents emit `← <type> from <project>: <one-sentence summary>` then `→ standby` after each handled message — keeps the transcript readable during bursts
 - **Human-in-the-loop**: `human-input-needed` messages with `proposedDefault` and `blocksWork`
-- **Delivery audit**: every claimed message is archived to `<inbox>/.delivered/` (pruned after 24h by `cleanup.sh`); both `bridge-listen.sh` and `check-inbox.sh` write CLAIM/OUTPUT/RESTORE entries to a shared `bridge-listen.log`, so silent message loss is recoverable + diagnosable
+- **Session lifecycle**: each session has a four-state machine — `active` (heartbeat producer alive), `offline` (cleanly `/bridge close`-ed or `/exit`-ed), `stale` (was supposed to be active but heartbeat went silent), `removed` (explicit `/bridge remove`, destructive). Recovery on resume is automatic: SessionStart hook → `resume-session.sh` adopts the existing ID, restarts the heartbeat-daemon, flips status back to `active`. No more silent ID changes on restart.
+- **Persistence-first cleanup**: nothing is auto-deleted — `bridge-listen.log`, `<inbox>/.delivered/`, conversations, manifests, inboxes, outboxes all survive indefinitely. Disk maintenance is operator-controlled via `/bridge prune --delivered N --outbox N --conversations N --logs N`.
+- **Stale detection**: on-demand only (during `send-message.sh` delivery and `/bridge peers` listing). Uses `<session-dir>/heartbeat` file content + PID-liveness check on `heartbeat-daemon.pid`. PID-liveness backstop prevents false positives across laptop sleep/wake.
+- **`recipient-stale` notification**: sending to a stale recipient still delivers the message (it queues in the inbox) AND emits a `recipient-stale` notification back to the sender so the orchestrator surfaces the unresponsive state to the user.
 
 ### v2 Backward Compatibility
 
