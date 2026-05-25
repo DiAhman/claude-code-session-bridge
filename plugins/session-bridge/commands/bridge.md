@@ -1,6 +1,6 @@
 ---
 name: bridge
-description: Peer-to-peer communication between Claude Code sessions - start, connect, listen, ask, peers, status, stop
+description: Peer-to-peer communication between Claude Code sessions - start, connect, listen, ask, peers, status, close, remove, prune
 argument-hint: "<action> [args]"
 allowed-tools:
   - Bash
@@ -323,15 +323,37 @@ Show pending human-input-needed messages that require the user's decision.
 
 5. If no decisions are pending, say "No pending decisions."
 
-### `stop`
+### `/bridge close`
 
-Unregister and clean up.
+Gracefully close this session — transitions status to `offline`, kills the heartbeat daemon and inbox-watcher, preserves the session directory and all state (inbox, outbox, logs, conversations) for later resumption. Used when you're done for the day but expect to come back to the same specialist later.
 
-1. Run:
-   ```bash
-   bash "${CLAUDE_PLUGIN_ROOT}/scripts/close-session.sh"
-   ```
-2. Tell the user: "Bridge stopped. Connected peers have been notified."
+```bash
+bash "${CLAUDE_PLUGIN_ROOT}/scripts/close-session.sh"
+```
+
+### `/bridge remove <session-id>`
+
+**Destructive.** Removes a session from a project permanently. Notifies peers via `session-removed`, resolves open conversations initiated by this session, deletes the session directory. Use this only when you genuinely want to dismiss a specialist from the project roster — they will need to `/bridge project join` again to come back, getting a new session ID.
+
+```bash
+bash "${CLAUDE_PLUGIN_ROOT}/scripts/remove-session.sh" "$SESSION_ID"
+```
+
+### `/bridge prune [options]`
+
+Operator-controlled disk maintenance. There is no automatic pruning — call this when you actually want to reclaim disk.
+
+Options:
+- `--delivered N` — prune `<inbox>/.delivered/*.json` older than N days
+- `--outbox N` — prune outbox messages older than N days
+- `--conversations N` — prune resolved conversations older than N days
+- `--logs N` — truncate bridge-listen.log files older than N days (by mtime)
+- `--all N` — all four with N as threshold
+- `--dry-run` — list what would be pruned without deleting
+
+```bash
+bash "${CLAUDE_PLUGIN_ROOT}/scripts/prune.sh" --delivered 7
+```
 
 ---
 
@@ -435,7 +457,9 @@ Bridge commands:
     /bridge status                    - Show bridge state and conversations
     /bridge standby                   - Listen and handle peer messages (blocks)
     /bridge decisions                 - Show pending human-input-needed queue
-    /bridge stop                      - Disconnect and clean up
+    /bridge close                     - Gracefully go offline (preserves state)
+    /bridge remove <id>               - Destructively remove a session from the project
+    /bridge prune [--flags]           - Operator-controlled disk maintenance
 
   Legacy (ad-hoc):
     /bridge start                     - Register without a project
