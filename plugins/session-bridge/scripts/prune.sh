@@ -12,6 +12,11 @@ CONVERSATIONS_DAYS=""
 LOGS_DAYS=""
 DRY_RUN=false
 
+# Bare invocation prints help, matching the embedded usage text.
+if [ $# -eq 0 ]; then
+  set -- --help
+fi
+
 while [ $# -gt 0 ]; do
   case "$1" in
     --delivered) DELIVERED_DAYS="$2"; shift 2 ;;
@@ -26,7 +31,7 @@ while [ $# -gt 0 ]; do
       LOGS_DAYS="${2:-30}"
       shift 2
       ;;
-    -h|--help|"")
+    -h|--help)
       cat <<EOF
 Usage: prune.sh [OPTIONS]
 
