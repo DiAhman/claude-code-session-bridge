@@ -329,7 +329,7 @@ Unregister and clean up.
 
 1. Run:
    ```bash
-   BRIDGE_CLEANUP_CONFIRMED=1 bash "${CLAUDE_PLUGIN_ROOT}/scripts/cleanup.sh"
+   bash "${CLAUDE_PLUGIN_ROOT}/scripts/close-session.sh"
    ```
 2. Tell the user: "Bridge stopped. Connected peers have been notified."
 

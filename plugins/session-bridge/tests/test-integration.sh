@@ -11,7 +11,7 @@ SEND_MSG="$PLUGIN_DIR/scripts/send-message.sh"
 CONNECT="$PLUGIN_DIR/scripts/connect-peer.sh"
 LISTEN="$PLUGIN_DIR/scripts/bridge-listen.sh"
 RECEIVE="$PLUGIN_DIR/scripts/bridge-receive.sh"
-CLEANUP="$PLUGIN_DIR/scripts/cleanup.sh"
+REMOVE_SESSION="$PLUGIN_DIR/scripts/remove-session.sh"
 LIST_PEERS="$PLUGIN_DIR/scripts/list-peers.sh"
 
 TEST_TMPDIR=$(mktemp -d)
@@ -98,27 +98,15 @@ else
   echo "  PASS: no stray messages in other inboxes"; PASS=$((PASS + 1))
 fi
 
-# --- Scenario 4: Cleanup notifies connected peers and removes session ---
+# --- Scenario 4: remove-session destroys legacy session directory ---
 echo ""
-echo "Scenario 4: Cleanup notifies peers and removes session"
+echo "Scenario 4: remove-session destroys session directory"
 
-BRIDGE_DIR="$BRIDGE_DIR" PROJECT_DIR="$PROJECT_A" bash "$CLEANUP"
+# Legacy sessions: remove-session.sh deletes the session dir but does NOT
+# emit session-removed (that notification is project-scoped only). Project
+# peer-notification path is covered by test-remove-session.sh.
+BRIDGE_DIR="$BRIDGE_DIR" bash "$REMOVE_SESSION" "$SESSION_A"
 assert_eq "session A dir removed" "false" "$([ -d "$BRIDGE_DIR/sessions/$SESSION_A" ] && echo true || echo false)"
-assert_eq "bridge-session pointer removed" "false" "$([ -f "$PROJECT_A/.claude/bridge-session" ] && echo true || echo false)"
-
-FOUND_ENDED=false
-for F in "$BRIDGE_DIR/sessions/$SESSION_B/inbox"/msg-*.json; do
-  [ -f "$F" ] || continue
-  if [ "$(jq -r '.type' "$F")" = "session-ended" ] && [ "$(jq -r '.from' "$F")" = "$SESSION_A" ]; then
-    FOUND_ENDED=true
-    break
-  fi
-done
-if $FOUND_ENDED; then
-  echo "  PASS: B notified of A's departure via session-ended"; PASS=$((PASS + 1))
-else
-  echo "  FAIL: B not notified of A's departure"; FAIL=$((FAIL + 1))
-fi
 
 # --- Scenario 5: list-peers shows active sessions ---
 echo ""
@@ -127,9 +115,9 @@ OUTPUT=$(BRIDGE_DIR="$BRIDGE_DIR" bash "$LIST_PEERS")
 assert_contains "lists session B" "$SESSION_B" "$OUTPUT"
 assert_contains "lists session C" "$SESSION_C" "$OUTPUT"
 
-# --- Scenario 6: Re-register after cleanup works ---
+# --- Scenario 6: Re-register after remove-session works ---
 echo ""
-echo "Scenario 6: Re-register after cleanup creates new session"
+echo "Scenario 6: Re-register after remove creates new session (stale pointer overwritten)"
 NEW_SESSION=$(BRIDGE_DIR="$BRIDGE_DIR" PROJECT_DIR="$PROJECT_A" bash "$REGISTER")
 assert_eq "new session is different" "true" "$([ "$NEW_SESSION" != "$SESSION_A" ] && echo true || echo false)"
 assert_dir_exists "new session inbox exists" "$BRIDGE_DIR/sessions/$NEW_SESSION/inbox"

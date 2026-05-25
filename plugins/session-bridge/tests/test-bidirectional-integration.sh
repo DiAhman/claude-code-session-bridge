@@ -11,7 +11,6 @@ JOIN="$PLUGIN_DIR/scripts/project-join.sh"
 SEND_MSG="$PLUGIN_DIR/scripts/send-message.sh"
 LISTEN="$PLUGIN_DIR/scripts/bridge-listen.sh"
 RECEIVE="$PLUGIN_DIR/scripts/bridge-receive.sh"
-CLEANUP="$PLUGIN_DIR/scripts/cleanup.sh"
 LIST_PEERS="$PLUGIN_DIR/scripts/list-peers.sh"
 
 TEST_TMPDIR=$(mktemp -d)

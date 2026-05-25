@@ -11,7 +11,6 @@ PLUGIN_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 CREATE_PROJ="$PLUGIN_DIR/scripts/project-create.sh"
 JOIN="$PLUGIN_DIR/scripts/project-join.sh"
 SEND_MSG="$PLUGIN_DIR/scripts/send-message.sh"
-CLEANUP="$PLUGIN_DIR/scripts/cleanup.sh"
 AUTO_JOIN="$PLUGIN_DIR/scripts/auto-join.sh"
 
 TEST_TMPDIR=$(mktemp -d)
@@ -49,26 +48,6 @@ if BRIDGE_DIR="$BRIDGE_DIR" BRIDGE_SESSION_ID="$SID_A" bash "$SEND_MSG" "$SID_B"
 else
   echo "  PASS: misspelled type rejected"; PASS=$((PASS + 1))
 fi
-
-# --- Timestamp validation in cleanup ---
-echo ""
-echo "--- timestamp validation ---"
-
-# Test 4: Session with null heartbeat is NOT deleted by stale cleanup
-PROJ_NULL="$TEST_TMPDIR/null-hb"
-mkdir -p "$PROJ_NULL"
-NULL_SID=$(BRIDGE_DIR="$BRIDGE_DIR" PROJECT_DIR="$PROJ_NULL" bash "$JOIN" "audit-test")
-NULL_MANIFEST="$BRIDGE_DIR/projects/audit-test/sessions/$NULL_SID/manifest.json"
-
-# Corrupt the heartbeat to null
-TMP=$(mktemp "$(dirname "$NULL_MANIFEST")/manifest.XXXXXX")
-jq '.lastHeartbeat = null' "$NULL_MANIFEST" > "$TMP" && mv "$TMP" "$NULL_MANIFEST"
-
-# Run cleanup from a different project dir (won't find this session as "its own")
-BRIDGE_CLEANUP_CONFIRMED=1 BRIDGE_DIR="$BRIDGE_DIR" PROJECT_DIR="$TEST_TMPDIR/nonexistent" bash "$CLEANUP" 2>/dev/null || true
-
-# Session with null heartbeat should still exist (not deleted by stale pruning)
-assert_dir_exists "null heartbeat session survives stale cleanup" "$BRIDGE_DIR/projects/audit-test/sessions/$NULL_SID"
 
 # --- Per-session rate limiting ---
 echo ""
