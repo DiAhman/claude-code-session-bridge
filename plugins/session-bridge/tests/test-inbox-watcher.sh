@@ -29,12 +29,12 @@ WATCHER_PID=$!
 sleep 1
 assert_eq "watcher is running" "true" "$(kill -0 $WATCHER_PID 2>/dev/null && echo true || echo false)"
 
-# Test 2: Heartbeat updates after watcher runs
+# Test 2: Watcher does NOT update lastHeartbeat (heartbeat-daemon.sh owns that now)
 OLD_HB=$(jq -r '.lastHeartbeat' "$MANIFEST")
 sleep 2
-# Trigger a heartbeat by waiting (watcher does it periodically)
-# For testing, we just verify the watcher hasn't crashed
 assert_eq "watcher still running" "true" "$(kill -0 $WATCHER_PID 2>/dev/null && echo true || echo false)"
+NEW_HB=$(jq -r '.lastHeartbeat' "$MANIFEST")
+assert_eq "inbox-watcher does not update lastHeartbeat" "$OLD_HB" "$NEW_HB"
 
 # Test 3: Clean shutdown
 kill $WATCHER_PID 2>/dev/null || true

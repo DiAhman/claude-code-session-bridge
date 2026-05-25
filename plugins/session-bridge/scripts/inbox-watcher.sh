@@ -1,9 +1,8 @@
 #!/usr/bin/env bash
-# scripts/inbox-watcher.sh — Background inbox watcher + heartbeat.
+# scripts/inbox-watcher.sh — Background inbox watcher for terminal notifications.
 # Usage: inbox-watcher.sh <session-id> <project-id>
 # Env: BRIDGE_DIR (default: ~/.claude/session-bridge)
 # Runs until killed. Watches inbox for new files, prints terminal notifications.
-# Updates heartbeat every 60 seconds.
 set -euo pipefail
 
 SESSION_ID="${1:?Usage: inbox-watcher.sh <session-id> <project-id>}"
@@ -11,24 +10,12 @@ PROJECT_ID="${2:?Usage: inbox-watcher.sh <session-id> <project-id>}"
 
 BRIDGE_DIR="${BRIDGE_DIR:-$HOME/.claude/session-bridge}"
 INBOX="$BRIDGE_DIR/projects/$PROJECT_ID/sessions/$SESSION_ID/inbox"
-MANIFEST="$BRIDGE_DIR/projects/$PROJECT_ID/sessions/$SESSION_ID/manifest.json"
 
 if [ ! -d "$INBOX" ]; then
   echo "Error: Inbox not found for session $SESSION_ID" >&2
   exit 1
 fi
 
-# Heartbeat update function
-update_heartbeat() {
-  [ -f "$MANIFEST" ] || return
-  local NOW TMP
-  NOW=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
-  TMP=$(mktemp "$(dirname "$MANIFEST")/manifest.XXXXXX")
-  jq --arg hb "$NOW" '.lastHeartbeat = $hb' "$MANIFEST" > "$TMP" 2>/dev/null && mv "$TMP" "$MANIFEST" || rm -f "$TMP"
-}
-
-LAST_HEARTBEAT=$(date +%s)
-HEARTBEAT_INTERVAL=60
 WATCHER_FAIL_COUNT=0
 MAX_WATCHER_FAILURES=5
 
@@ -51,13 +38,6 @@ while $RUNNING; do
   if [ ! -d "$INBOX" ]; then
     echo "Error: Inbox directory $INBOX no longer exists. Stopping watcher." >&2
     exit 1
-  fi
-
-  # Heartbeat check
-  NOW_EPOCH=$(date +%s)
-  if [ $((NOW_EPOCH - LAST_HEARTBEAT)) -ge $HEARTBEAT_INTERVAL ]; then
-    update_heartbeat
-    LAST_HEARTBEAT=$NOW_EPOCH
   fi
 
   case "$WATCHER" in
