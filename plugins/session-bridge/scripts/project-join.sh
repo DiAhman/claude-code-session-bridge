@@ -56,70 +56,17 @@ fi
 [ -z "$ROLE" ] && ROLE="specialist"
 SESSION_NAME="${CUSTOM_NAME:-$(basename "$PROJECT_DIR")}"
 
-# Reuse existing session if bridge-session file points to a valid session in this project
+# Strict mode: error if this PROJECT_DIR is already a member.
+# Resumption is the job of resume-session.sh, not project-join.sh.
 if [ -f "$BRIDGE_SESSION_FILE" ]; then
-  EXISTING_ID=$(cat "$BRIDGE_SESSION_FILE")
-  EXISTING_DIR="$PROJECT_PATH/sessions/$EXISTING_ID"
-  if [ -d "$EXISTING_DIR" ] && [ -f "$EXISTING_DIR/manifest.json" ]; then
-    # Verify it's in the same project
-    EXISTING_PROJECT=$(jq -r '.projectId // ""' "$EXISTING_DIR/manifest.json")
-    if [ "$EXISTING_PROJECT" = "$PROJECT_NAME" ]; then
-      # Update heartbeat + apply any changed fields
-      NOW=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
-      TMP=$(mktemp "$EXISTING_DIR/manifest.XXXXXX")
-      jq --arg hb "$NOW" --arg role "$ROLE" --arg spec "$SPECIALTY" --arg pname "$SESSION_NAME" \
-        '.lastHeartbeat = $hb | .role = $role | .specialty = $spec | .projectName = $pname' \
-        "$EXISTING_DIR/manifest.json" > "$TMP" \
-        && mv "$TMP" "$EXISTING_DIR/manifest.json" \
-        || { rm -f "$TMP"; exit 1; }
-      # Persist role for future joins (atomic write)
-      mkdir -p "$PROJECT_DIR/.claude"
-      ROLE_TMP=$(mktemp "$PROJECT_DIR/.claude/bridge-role.XXXXXX")
-      jq -n --arg role "$ROLE" --arg spec "$SPECIALTY" --arg name "$SESSION_NAME" --arg project "$PROJECT_NAME" \
-        '{role: $role, specialty: $spec, name: $name, project: $project}' > "$ROLE_TMP"
-      mv "$ROLE_TMP" "$BRIDGE_ROLE_FILE"
-      # Ensure watcher is alive — relaunch if dead (prevents false cleanup triggers)
-      SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-      WATCHER_SCRIPT="$SCRIPT_DIR/inbox-watcher.sh"
-      WATCHER_PID_FILE="$EXISTING_DIR/watcher.pid"
-      if [ -f "$WATCHER_SCRIPT" ]; then
-        NEED_WATCHER=false
-        if [ ! -f "$WATCHER_PID_FILE" ]; then
-          NEED_WATCHER=true
-        else
-          OLD_WPID=$(cat "$WATCHER_PID_FILE" 2>/dev/null || echo "")
-          if [ -z "$OLD_WPID" ] || ! kill -0 "$OLD_WPID" 2>/dev/null; then
-            NEED_WATCHER=true
-          fi
-        fi
-        if [ "$NEED_WATCHER" = true ]; then
-          BRIDGE_DIR="$BRIDGE_DIR" bash "$WATCHER_SCRIPT" "$EXISTING_ID" "$PROJECT_NAME" >/dev/null 2>&1 &
-          WATCHER_PID=$!
-          sleep 0.1
-          if kill -0 "$WATCHER_PID" 2>/dev/null; then
-            echo "$WATCHER_PID" > "$WATCHER_PID_FILE"
-            disown "$WATCHER_PID"
-          fi
-        fi
-      fi
-      # Heartbeat daemon: launch if not already running for this session
-      HEARTBEAT_SCRIPT="$SCRIPT_DIR/heartbeat-daemon.sh"
-      HB_PID_FILE="$EXISTING_DIR/heartbeat-daemon.pid"
-      NEED_HEARTBEAT=true
-      if [ -f "$HB_PID_FILE" ]; then
-        OLD_HB_PID=$(cat "$HB_PID_FILE" 2>/dev/null || echo "")
-        if [ -n "$OLD_HB_PID" ] && kill -0 "$OLD_HB_PID" 2>/dev/null; then
-          NEED_HEARTBEAT=false
-        fi
-      fi
-      if [ "$NEED_HEARTBEAT" = true ] && [ -f "$HEARTBEAT_SCRIPT" ]; then
-        bash "$HEARTBEAT_SCRIPT" "$EXISTING_DIR" >/dev/null 2>&1 &
-        HB_PID=$!
-        sleep 0.1
-        kill -0 "$HB_PID" 2>/dev/null && disown "$HB_PID" 2>/dev/null || true
-      fi
-      echo -n "$EXISTING_ID"
-      exit 0
+  EXISTING_ID=$(cat "$BRIDGE_SESSION_FILE" 2>/dev/null || echo "")
+  if [ -n "$EXISTING_ID" ]; then
+    EXISTING_DIR="$PROJECT_PATH/sessions/$EXISTING_ID"
+    if [ -d "$EXISTING_DIR" ]; then
+      echo "Error: $PROJECT_DIR is already a member of project '$PROJECT_NAME' as session $EXISTING_ID." >&2
+      echo "  - To resume that session, just restart Claude Code (SessionStart hook auto-resumes)." >&2
+      echo "  - To replace it with a new session, run: /bridge remove $EXISTING_ID" >&2
+      exit 1
     fi
   fi
 fi

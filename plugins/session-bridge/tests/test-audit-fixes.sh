@@ -143,8 +143,8 @@ fi
 # Write a dead PID
 echo "99999" > "$WATCHER_PID_FILE"
 
-# Rejoin — should detect dead watcher and relaunch
-BRIDGE_DIR="$BRIDGE_DIR" PROJECT_DIR="$PROJ_A" bash "$JOIN" "audit-test" > /dev/null
+# Resume — should detect dead watcher and relaunch
+BRIDGE_DIR="$BRIDGE_DIR" PROJECT_DIR="$PROJ_A" bash "$PLUGIN_DIR/scripts/resume-session.sh" > /dev/null
 sleep 0.5
 
 if [ -f "$WATCHER_PID_FILE" ]; then

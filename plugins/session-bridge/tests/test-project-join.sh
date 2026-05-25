@@ -7,6 +7,7 @@ source "$SCRIPT_DIR/test-helpers.sh"
 PLUGIN_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 CREATE="$PLUGIN_DIR/scripts/project-create.sh"
 JOIN="$PLUGIN_DIR/scripts/project-join.sh"
+RESUME="$PLUGIN_DIR/scripts/resume-session.sh"
 
 TEST_TMPDIR=$(mktemp -d)
 trap 'rm -rf "$TEST_TMPDIR"; kill $(jobs -p) 2>/dev/null || true' EXIT
@@ -48,9 +49,9 @@ assert_eq "sessions are different" "true" "$([ "$SESSION_ID" != "$SESSION_B" ] &
 assert_dir_exists "second session exists" "$BRIDGE_DIR/projects/test-suite/sessions/$SESSION_B"
 assert_json_field "second session role" "$BRIDGE_DIR/projects/test-suite/sessions/$SESSION_B/manifest.json" '.role' "specialist"
 
-# Test 5: Reuses existing session if already joined
-SESSION_REUSE=$(BRIDGE_DIR="$BRIDGE_DIR" PROJECT_DIR="$PROJECT_A" bash "$JOIN" "test-suite" --role specialist --specialty "app development")
-assert_eq "reuses session ID" "$SESSION_ID" "$SESSION_REUSE"
+# Test 5: resume-session.sh reuses existing session if already joined
+SESSION_REUSE=$(BRIDGE_DIR="$BRIDGE_DIR" PROJECT_DIR="$PROJECT_A" bash "$RESUME")
+assert_eq "resume returns existing session ID" "$SESSION_ID" "$SESSION_REUSE"
 
 # Test 6: Fails if project doesn't exist
 if BRIDGE_DIR="$BRIDGE_DIR" PROJECT_DIR="$PROJECT_A" bash "$JOIN" "nonexistent" 2>/dev/null; then
@@ -83,13 +84,13 @@ assert_not_empty "startedAt is set" "$STARTED"
 assert_not_empty "lastHeartbeat is set" "$HEARTBEAT"
 # Note: startedAt and lastHeartbeat may differ after reuse (heartbeat updated on rejoin)
 
-# Test 11: Reuse updates lastHeartbeat
+# Test 11: resume-session.sh updates lastHeartbeat
 sleep 1
-SESSION_REUSE2=$(BRIDGE_DIR="$BRIDGE_DIR" PROJECT_DIR="$PROJECT_A" bash "$JOIN" "test-suite")
+SESSION_REUSE2=$(BRIDGE_DIR="$BRIDGE_DIR" PROJECT_DIR="$PROJECT_A" bash "$RESUME")
 NEW_HEARTBEAT=$(jq -r '.lastHeartbeat' "$MANIFEST")
-assert_eq "reuses session again" "$SESSION_ID" "$SESSION_REUSE2"
+assert_eq "resume returns existing session again" "$SESSION_ID" "$SESSION_REUSE2"
 # Heartbeat should be updated (may or may not differ in fast execution, but should not error)
-assert_not_empty "lastHeartbeat updated on reuse" "$NEW_HEARTBEAT"
+assert_not_empty "lastHeartbeat updated on resume" "$NEW_HEARTBEAT"
 
 # Test 12: Session ID format is 6 alphanumeric characters
 assert_eq "session ID is 6 chars" "6" "${#SESSION_ID}"
@@ -118,5 +119,22 @@ if [ -n "$DAEMON_PID" ] && kill -0 "$DAEMON_PID" 2>/dev/null; then
 else
   echo "  FAIL: heartbeat-daemon not alive"; FAIL=$((FAIL + 1))
 fi
+
+# --- Test ST1: project-join errors if .claude/bridge-session already exists ---
+echo ""
+echo "Test ST1: project-join errors when bridge-session pointer exists"
+PROJECT_ST1="$TEST_TMPDIR/proj-st1"
+mkdir -p "$PROJECT_ST1/.claude"
+SID_ST1=$(BRIDGE_DIR="$BRIDGE_DIR" PROJECT_DIR="$PROJECT_ST1" bash "$JOIN" "test-suite" --role specialist --name "st1")
+# Try to join again — should error
+OUT=$(BRIDGE_DIR="$BRIDGE_DIR" PROJECT_DIR="$PROJECT_ST1" bash "$JOIN" "test-suite" 2>&1 || true)
+if echo "$OUT" | grep -qE "already.*member|already.*registered"; then
+  echo "  PASS: rejects re-join with existing bridge-session"; PASS=$((PASS + 1))
+else
+  echo "  FAIL: expected 'already a member' error, got: $OUT"; FAIL=$((FAIL + 1))
+fi
+# Cleanup the daemon spawned by the first successful join
+HB_PID_ST1=$(cat "$BRIDGE_DIR/projects/test-suite/sessions/$SID_ST1/heartbeat-daemon.pid" 2>/dev/null || echo "")
+[ -n "$HB_PID_ST1" ] && kill "$HB_PID_ST1" 2>/dev/null || true
 
 print_results
