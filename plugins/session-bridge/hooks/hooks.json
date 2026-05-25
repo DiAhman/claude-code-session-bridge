@@ -54,7 +54,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "bash \"${CLAUDE_PLUGIN_ROOT}/scripts/cleanup.sh\"",
+            "command": "bash \"${CLAUDE_PLUGIN_ROOT}/scripts/close-session.sh\"",
             "async": false
           }
         ]
