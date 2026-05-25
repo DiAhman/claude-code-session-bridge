@@ -93,12 +93,29 @@ if [ -z "$PROJECT_FILTER" ] && [ -d "$SESSIONS_DIR" ]; then
         STATUS="$MANIFEST_STATUS"
         ;;
       active)
-        if is_stale "$SESSION_PATH" "$STALE_SECONDS"; then
-          # On-demand stale-flip: write it back so consumers see it
-          set_status "$MANIFEST" "stale"
-          STATUS="stale"
+        # Legacy compat: register.sh doesn't spawn the heartbeat-daemon, so
+        # legacy sessions have no heartbeat file. Fall back to manifest.lastHeartbeat
+        # age check (the pre-redesign behavior) when no heartbeat file exists.
+        # Project-scoped sessions (which always have a heartbeat-daemon) take the
+        # is_stale path.
+        if [ -f "$SESSION_PATH/heartbeat" ]; then
+          if is_stale "$SESSION_PATH" "$STALE_SECONDS"; then
+            set_status "$MANIFEST" "stale"
+            STATUS="stale"
+          else
+            STATUS="active"
+          fi
         else
-          STATUS="active"
+          # Legacy fallback: compute from lastHeartbeat field
+          HB=$(jq -r '.lastHeartbeat // ""' "$MANIFEST")
+          HB_EPOCH=$(date -u -jf "%Y-%m-%dT%H:%M:%SZ" "$HB" +%s 2>/dev/null \
+            || date -u -d "$HB" +%s 2>/dev/null || echo "0")
+          AGE=$(( $(date -u +%s) - HB_EPOCH ))
+          if [ "$AGE" -gt "$STALE_SECONDS" ]; then
+            STATUS="stale"
+          else
+            STATUS="active"
+          fi
         fi
         ;;
       *)

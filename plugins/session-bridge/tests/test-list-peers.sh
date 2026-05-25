@@ -30,10 +30,6 @@ PROJECT_A="$TEST_TMPDIR/project-alpha"
 mkdir -p "$PROJECT_A"
 
 SESSION_ID=$(BRIDGE_DIR="$BRIDGE_DIR" PROJECT_DIR="$PROJECT_A" bash "$REGISTER")
-# Simulate a live heartbeat-daemon: fresh heartbeat file with current ISO timestamp
-# and a PID file pointing at this shell (alive, but won't match cmdline so is_producer_alive
-# returns false; instead we make the heartbeat fresh so is_stale short-circuits on age).
-date -u +"%Y-%m-%dT%H:%M:%SZ" > "$BRIDGE_DIR/sessions/$SESSION_ID/heartbeat"
 OUTPUT=$(BRIDGE_DIR="$BRIDGE_DIR" bash "$LIST_PEERS")
 
 assert_contains "output contains session ID" "$SESSION_ID" "$OUTPUT"
