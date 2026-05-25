@@ -99,4 +99,24 @@ else
   echo "  FAIL: session ID '$SESSION_ID' doesn't match [a-z0-9]{6}"; FAIL=$((FAIL + 1))
 fi
 
+# --- Test HB1: heartbeat-daemon is launched on session create ---
+echo ""
+echo "Test HB1: heartbeat-daemon.sh starts when a new session is created"
+PROJECT_HB1="$TEST_TMPDIR/proj-hb1"
+mkdir -p "$PROJECT_HB1/.claude"
+SID_HB1=$(BRIDGE_DIR="$BRIDGE_DIR" PROJECT_DIR="$PROJECT_HB1" \
+  bash "$JOIN" "test-suite" --role specialist --name "hb1-test")
+sleep 2  # give daemon time to write first heartbeat
+HB_FILE="$BRIDGE_DIR/projects/test-suite/sessions/$SID_HB1/heartbeat"
+PID_FILE="$BRIDGE_DIR/projects/test-suite/sessions/$SID_HB1/heartbeat-daemon.pid"
+assert_file_exists "heartbeat file created" "$HB_FILE"
+assert_file_exists "heartbeat-daemon PID file created" "$PID_FILE"
+DAEMON_PID=$(cat "$PID_FILE" 2>/dev/null || echo "")
+if [ -n "$DAEMON_PID" ] && kill -0 "$DAEMON_PID" 2>/dev/null; then
+  echo "  PASS: heartbeat-daemon is alive"; PASS=$((PASS + 1))
+  kill "$DAEMON_PID" 2>/dev/null || true
+else
+  echo "  FAIL: heartbeat-daemon not alive"; FAIL=$((FAIL + 1))
+fi
+
 print_results

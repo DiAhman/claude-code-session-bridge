@@ -102,6 +102,22 @@ if [ -f "$BRIDGE_SESSION_FILE" ]; then
           fi
         fi
       fi
+      # Heartbeat daemon: launch if not already running for this session
+      HEARTBEAT_SCRIPT="$SCRIPT_DIR/heartbeat-daemon.sh"
+      HB_PID_FILE="$EXISTING_DIR/heartbeat-daemon.pid"
+      NEED_HEARTBEAT=true
+      if [ -f "$HB_PID_FILE" ]; then
+        OLD_HB_PID=$(cat "$HB_PID_FILE" 2>/dev/null || echo "")
+        if [ -n "$OLD_HB_PID" ] && kill -0 "$OLD_HB_PID" 2>/dev/null; then
+          NEED_HEARTBEAT=false
+        fi
+      fi
+      if [ "$NEED_HEARTBEAT" = true ] && [ -f "$HEARTBEAT_SCRIPT" ]; then
+        bash "$HEARTBEAT_SCRIPT" "$EXISTING_DIR" >/dev/null 2>&1 &
+        HB_PID=$!
+        sleep 0.1
+        kill -0 "$HB_PID" 2>/dev/null && disown "$HB_PID" 2>/dev/null || true
+      fi
       echo -n "$EXISTING_ID"
       exit 0
     fi
@@ -165,6 +181,19 @@ if [ -f "$WATCHER_SCRIPT" ]; then
     disown "$WATCHER_PID"
   else
     echo "Warning: Inbox watcher failed to start" >&2
+  fi
+fi
+
+# Start heartbeat daemon (separate from watcher; owns the heartbeat file)
+HEARTBEAT_SCRIPT="$SCRIPT_DIR/heartbeat-daemon.sh"
+if [ -f "$HEARTBEAT_SCRIPT" ]; then
+  bash "$HEARTBEAT_SCRIPT" "$SESSION_DIR" >/dev/null 2>&1 &
+  HB_PID=$!
+  sleep 0.1
+  if kill -0 "$HB_PID" 2>/dev/null; then
+    disown "$HB_PID" 2>/dev/null || true
+  else
+    echo "Warning: heartbeat-daemon failed to start" >&2
   fi
 fi
 
