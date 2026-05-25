@@ -25,10 +25,14 @@ while [ $# -gt 0 ]; do
     --logs) LOGS_DAYS="$2"; shift 2 ;;
     --dry-run) DRY_RUN=true; shift ;;
     --all)
-      DELIVERED_DAYS="${2:-7}"
-      OUTBOX_DAYS="${2:-7}"
-      CONVERSATIONS_DAYS="${2:-30}"
-      LOGS_DAYS="${2:-30}"
+      if [ -z "${2:-}" ] || [[ "$2" == --* ]]; then
+        echo "Error: --all requires N (days)" >&2
+        exit 1
+      fi
+      DELIVERED_DAYS="$2"
+      OUTBOX_DAYS="$2"
+      CONVERSATIONS_DAYS="$2"
+      LOGS_DAYS="$2"
       shift 2
       ;;
     -h|--help)
@@ -39,7 +43,7 @@ Usage: prune.sh [OPTIONS]
   --outbox N         Prune outbox messages older than N days
   --conversations N  Prune resolved conversations older than N days
   --logs N           Prune bridge-listen.log lines older than N days (truncate)
-  --all N            All four with N as the threshold (logs/convs use 30 if N omitted)
+  --all N            All four with N as the threshold
   --dry-run          List what would be deleted without deleting
 
 Without flags, prints this help.

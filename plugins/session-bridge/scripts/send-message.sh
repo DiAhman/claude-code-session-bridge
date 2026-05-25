@@ -231,7 +231,7 @@ if [ "$RECIPIENT_STALE_DETECTED" = true ]; then
       --arg type "recipient-stale" \
       --arg ts "$NOTIF_NOW" \
       --arg content "$NOTIF_CONTENT" \
-      --arg fromProject "$SENDER_PROJECT" \
+      --arg fromProject "$RECIPIENT_NAME" \
       --arg origMsg "$MSG_ID" \
       --arg staleId "$TARGET_ID" \
       --arg staleName "$RECIPIENT_NAME" \

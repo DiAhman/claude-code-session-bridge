@@ -25,7 +25,15 @@ PEER_NAME=$(jq -r '.projectName' "$TARGET_MANIFEST")
 PEER_PATH=$(jq -r '.projectPath' "$TARGET_MANIFEST")
 
 # Check for staleness (>5 min since last heartbeat)
-PEER_HB=$(jq -r '.lastHeartbeat' "$TARGET_MANIFEST")
+# Prefer heartbeat file (written by heartbeat-daemon); fall back to manifest.lastHeartbeat for legacy.
+TARGET_DIR="$(dirname "$TARGET_MANIFEST")"
+PEER_HB=""
+if [ -f "$TARGET_DIR/heartbeat" ]; then
+  PEER_HB=$(head -1 "$TARGET_DIR/heartbeat" 2>/dev/null || echo "")
+fi
+if [ -z "$PEER_HB" ]; then
+  PEER_HB=$(jq -r '.lastHeartbeat' "$TARGET_MANIFEST")
+fi
 NOW_EPOCH=$(date -u +%s)
 HB_EPOCH=$(date -u -jf "%Y-%m-%dT%H:%M:%SZ" "$PEER_HB" +%s 2>/dev/null || date -u -d "$PEER_HB" +%s 2>/dev/null || echo "0")
 AGE=$((NOW_EPOCH - HB_EPOCH))

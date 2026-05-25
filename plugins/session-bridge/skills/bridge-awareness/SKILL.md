@@ -659,12 +659,18 @@ When all subtasks in a chain resolve, synthesize results and report to the user.
 If you are a specialist, monitor the orchestrator's health before sending `task-complete` messages:
 
 ```bash
-# Check orchestrator heartbeat
-ORCH_MANIFEST="$BRIDGE_DIR/projects/$PROJECT_ID/sessions/$ORCHESTRATOR_ID/manifest.json"
-LAST_HB=$(jq -r '.lastHeartbeat' "$ORCH_MANIFEST")
+# Check orchestrator heartbeat — prefer the heartbeat file (written every
+# HEARTBEAT_INTERVAL seconds by heartbeat-daemon), fall back to the manifest
+# field only for legacy sessions without a daemon. Matches list-peers.sh logic.
+ORCH_DIR="$BRIDGE_DIR/projects/$PROJECT_ID/sessions/$ORCHESTRATOR_ID"
+if [ -f "$ORCH_DIR/heartbeat" ]; then
+  LAST_HB=$(head -1 "$ORCH_DIR/heartbeat")
+else
+  LAST_HB=$(jq -r '.lastHeartbeat' "$ORCH_DIR/manifest.json")
+fi
 ```
 
-If the orchestrator's `lastHeartbeat` is older than 5 minutes (status is likely `stale` or `offline`):
+If the orchestrator's heartbeat is older than 5 minutes (status is likely `stale` or `offline`):
 
 1. **Pause non-critical work.** Don't pick up new tasks.
 2. **Continue in-progress work** that doesn't require orchestrator interaction.

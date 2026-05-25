@@ -166,9 +166,17 @@ if [ "$SUMMARY_ONLY" = true ]; then
       SNAME=$(jq -r '.projectName' "$MANIFEST")
       SROLE=$(jq -r '.role // "unknown"' "$MANIFEST")
       # Check heartbeat freshness — skip sessions stale for over 1 hour
-      LAST_HB=$(jq -r '.lastHeartbeat // ""' "$MANIFEST")
-      if [ -n "$LAST_HB" ] && [ "$LAST_HB" != "null" ]; then
-        HB_EPOCH=$(date -u -jf "%Y-%m-%dT%H:%M:%SZ" "$LAST_HB" +%s 2>/dev/null || date -u -d "$LAST_HB" +%s 2>/dev/null || echo 0)
+      # Prefer heartbeat file (written by heartbeat-daemon); fall back to manifest.lastHeartbeat for legacy.
+      SESSION_PATH="$(dirname "$MANIFEST")"
+      HB_STR=""
+      if [ -f "$SESSION_PATH/heartbeat" ]; then
+        HB_STR=$(head -1 "$SESSION_PATH/heartbeat" 2>/dev/null || echo "")
+      fi
+      if [ -z "$HB_STR" ]; then
+        HB_STR=$(jq -r '.lastHeartbeat // ""' "$MANIFEST")
+      fi
+      if [ -n "$HB_STR" ] && [ "$HB_STR" != "null" ]; then
+        HB_EPOCH=$(date -u -jf "%Y-%m-%dT%H:%M:%SZ" "$HB_STR" +%s 2>/dev/null || date -u -d "$HB_STR" +%s 2>/dev/null || echo 0)
         # Reject invalid epochs (before 2020-01-01) — prevents malformed timestamps from hiding sessions
         if [ "$HB_EPOCH" -lt 1577836800 ]; then
           continue  # Invalid epoch — skip session
