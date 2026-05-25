@@ -8,6 +8,10 @@ set -euo pipefail
 BRIDGE_DIR="${BRIDGE_DIR:-$HOME/.claude/session-bridge}"
 SESSIONS_DIR="$BRIDGE_DIR/sessions"
 
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+# shellcheck source=lib/stale-check.sh
+source "$SCRIPT_DIR/lib/stale-check.sh"
+
 NOW_EPOCH=$(date -u +%s)
 STALE_SECONDS=300  # 5 minutes
 FOUND=0
@@ -36,10 +40,30 @@ for PROJ_JSON in "$BRIDGE_DIR"/projects/*/project.json; do
     PNAME=$(jq -r '.projectName' "$MANIFEST")
     ROLE=$(jq -r '.role // ""' "$MANIFEST")
     SPEC=$(jq -r '.specialty // ""' "$MANIFEST")
-    HB=$(jq -r '.lastHeartbeat' "$MANIFEST")
-    HB_EPOCH=$(date -u -jf "%Y-%m-%dT%H:%M:%SZ" "$HB" +%s 2>/dev/null || date -u -d "$HB" +%s 2>/dev/null || echo "0")
-    AGE=$((NOW_EPOCH - HB_EPOCH))
-    STATUS=$( [ "$AGE" -gt "$STALE_SECONDS" ] && echo "stale" || echo "active" )
+    MANIFEST_STATUS=$(jq -r '.status // "active"' "$MANIFEST")
+    SESSION_PATH="$(dirname "$MANIFEST")"
+
+    # Determine display status:
+    #   - "offline" or "removed" → as-is
+    #   - "stale" → as-is (already detected by lib elsewhere or by daemon EXIT trap)
+    #   - "active" → check via is_stale (may flip to stale due to silent producer)
+    case "$MANIFEST_STATUS" in
+      offline|removed|stale)
+        STATUS="$MANIFEST_STATUS"
+        ;;
+      active)
+        if is_stale "$SESSION_PATH" "$STALE_SECONDS"; then
+          # On-demand stale-flip: write it back so consumers see it
+          set_status "$MANIFEST" "stale"
+          STATUS="stale"
+        else
+          STATUS="active"
+        fi
+        ;;
+      *)
+        STATUS="$MANIFEST_STATUS"
+        ;;
+    esac
 
     printf "  %-10s %-20s %-12s %-15s %s\n" "$SID" "$PNAME" "$ROLE" "$STATUS" "$SPEC"
     FOUND=$((FOUND + 1))
@@ -57,16 +81,30 @@ if [ -z "$PROJECT_FILTER" ] && [ -d "$SESSIONS_DIR" ]; then
     SID=$(jq -r '.sessionId' "$MANIFEST")
     PNAME=$(jq -r '.projectName' "$MANIFEST")
     PPATH=$(jq -r '.projectPath' "$MANIFEST")
-    HB=$(jq -r '.lastHeartbeat' "$MANIFEST")
+    MANIFEST_STATUS=$(jq -r '.status // "active"' "$MANIFEST")
+    SESSION_PATH="$(dirname "$MANIFEST")"
 
-    HB_EPOCH=$(date -u -jf "%Y-%m-%dT%H:%M:%SZ" "$HB" +%s 2>/dev/null || date -u -d "$HB" +%s 2>/dev/null || echo "0")
-    AGE=$((NOW_EPOCH - HB_EPOCH))
-
-    if [ "$AGE" -gt "$STALE_SECONDS" ]; then
-      STATUS="stale"
-    else
-      STATUS="active"
-    fi
+    # Determine display status:
+    #   - "offline" or "removed" → as-is
+    #   - "stale" → as-is (already detected by lib elsewhere or by daemon EXIT trap)
+    #   - "active" → check via is_stale (may flip to stale due to silent producer)
+    case "$MANIFEST_STATUS" in
+      offline|removed|stale)
+        STATUS="$MANIFEST_STATUS"
+        ;;
+      active)
+        if is_stale "$SESSION_PATH" "$STALE_SECONDS"; then
+          # On-demand stale-flip: write it back so consumers see it
+          set_status "$MANIFEST" "stale"
+          STATUS="stale"
+        else
+          STATUS="active"
+        fi
+        ;;
+      *)
+        STATUS="$MANIFEST_STATUS"
+        ;;
+    esac
 
     if [ "$LEGACY_FOUND" -eq 0 ]; then
       LEGACY_OUTPUT=$(printf "%-10s %-20s %-8s %s\n" "SESSION" "PROJECT" "STATUS" "PATH")

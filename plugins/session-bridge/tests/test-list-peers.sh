@@ -30,6 +30,10 @@ PROJECT_A="$TEST_TMPDIR/project-alpha"
 mkdir -p "$PROJECT_A"
 
 SESSION_ID=$(BRIDGE_DIR="$BRIDGE_DIR" PROJECT_DIR="$PROJECT_A" bash "$REGISTER")
+# Simulate a live heartbeat-daemon: fresh heartbeat file with current ISO timestamp
+# and a PID file pointing at this shell (alive, but won't match cmdline so is_producer_alive
+# returns false; instead we make the heartbeat fresh so is_stale short-circuits on age).
+date -u +"%Y-%m-%dT%H:%M:%SZ" > "$BRIDGE_DIR/sessions/$SESSION_ID/heartbeat"
 OUTPUT=$(BRIDGE_DIR="$BRIDGE_DIR" bash "$LIST_PEERS")
 
 assert_contains "output contains session ID" "$SESSION_ID" "$OUTPUT"
@@ -110,6 +114,27 @@ if echo "$OUTPUT" | grep -q "$V2_SID_C"; then
 else
   echo "  PASS: other project session correctly filtered out"; PASS=$((PASS + 1))
 fi
+
+# --- Test LP-S1: list-peers displays offline status from manifest ---
+echo ""
+echo "Test LP-S1: offline status shown in /bridge peers output"
+# Manually set a session's status to offline
+TARGET_MANIFEST="$V2_BRIDGE/projects/peers-proj/sessions/$V2_SID_B/manifest.json"
+TMP=$(mktemp "$V2_BRIDGE/projects/peers-proj/sessions/$V2_SID_B/manifest.XXXXXX")
+jq '.status = "offline"' "$TARGET_MANIFEST" > "$TMP" && mv "$TMP" "$TARGET_MANIFEST"
+OUTPUT=$(BRIDGE_DIR="$V2_BRIDGE" bash "$LIST_PEERS" --project "peers-proj")
+assert_contains "displays offline" "offline" "$OUTPUT"
+
+# --- Test LP-S2: stale status detected via lib (no heartbeat file + status=active) ---
+echo ""
+echo "Test LP-S2: stale status detected when status=active but no heartbeat file"
+# Flip back to active, but no heartbeat file
+TMP=$(mktemp "$V2_BRIDGE/projects/peers-proj/sessions/$V2_SID_B/manifest.XXXXXX")
+jq '.status = "active"' "$TARGET_MANIFEST" > "$TMP" && mv "$TMP" "$TARGET_MANIFEST"
+rm -f "$V2_BRIDGE/projects/peers-proj/sessions/$V2_SID_B/heartbeat"
+rm -f "$V2_BRIDGE/projects/peers-proj/sessions/$V2_SID_B/heartbeat-daemon.pid"
+OUTPUT=$(BRIDGE_DIR="$V2_BRIDGE" bash "$LIST_PEERS" --project "peers-proj")
+assert_contains "displays stale" "stale" "$OUTPUT"
 
 kill_watchers "$V2_BRIDGE"
 rm -rf "$V2_TMPDIR"
