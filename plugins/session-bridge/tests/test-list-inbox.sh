@@ -149,4 +149,51 @@ else
   echo "  PASS: cross-project did not leak target inbox content"; PASS=$((PASS + 1))
 fi
 
+# --- Test 10: unknown flag exits nonzero with stderr error ---
+echo ""
+echo "Test 10: unknown --flag exits nonzero"
+setup_project_session "$BRIDGE_DIR" "proj-flags" "flag111" >/dev/null
+RC=0
+ERR=$(BRIDGE_SESSION_ID="flag111" BRIDGE_DIR="$BRIDGE_DIR" \
+  bash "$LIST_INBOX" --bogus-flag 2>&1 >/dev/null) || RC=$?
+if [ "$RC" -ne 0 ]; then
+  echo "  PASS: --bogus-flag exits nonzero"; PASS=$((PASS + 1))
+else
+  echo "  FAIL: --bogus-flag should exit nonzero"; FAIL=$((FAIL + 1))
+fi
+assert_contains "stderr names the unknown flag" "--bogus-flag" "$ERR"
+
+# --- Test 11: --since with garbage duration exits nonzero ---
+echo ""
+echo "Test 11: --since with non-parseable duration exits nonzero"
+RC=0
+ERR=$(BRIDGE_SESSION_ID="flag111" BRIDGE_DIR="$BRIDGE_DIR" \
+  bash "$LIST_INBOX" --since "yesterday" 2>&1 >/dev/null) || RC=$?
+if [ "$RC" -ne 0 ]; then
+  echo "  PASS: --since yesterday exits nonzero"; PASS=$((PASS + 1))
+else
+  echo "  FAIL: --since yesterday should exit nonzero"; FAIL=$((FAIL + 1))
+fi
+assert_contains "stderr mentions invalid duration" "invalid --since" "$ERR"
+
+# --- Test 12: bare integer --since is treated as seconds ---
+echo ""
+echo "Test 12: --since 60 (bare integer) is interpreted as seconds"
+setup_project_session "$BRIDGE_DIR" "proj-secs" "sec111" >/dev/null
+INBOX_S="$BRIDGE_DIR/projects/proj-secs/sessions/sec111/inbox"
+NOW_EPOCH=$(date -u +%s)
+RECENT_TS=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+TOO_OLD_EPOCH=$((NOW_EPOCH - 120))  # 2 minutes old
+TOO_OLD_TS=$(date -u -r "$TOO_OLD_EPOCH" +"%Y-%m-%dT%H:%M:%SZ" 2>/dev/null \
+  || date -u -d "@$TOO_OLD_EPOCH" +"%Y-%m-%dT%H:%M:%SZ" 2>/dev/null)
+write_msg "$INBOX_S" "msg-secrecent11" "p" "ping" "fresh" "$RECENT_TS"
+write_msg "$INBOX_S" "msg-sectooold11" "p" "ping" "stale" "$TOO_OLD_TS"
+OUTPUT=$(BRIDGE_SESSION_ID="sec111" BRIDGE_DIR="$BRIDGE_DIR" bash "$LIST_INBOX" --since 60)
+assert_contains "bare-int --since keeps recent" "msg-secrecent11" "$OUTPUT"
+if echo "$OUTPUT" | grep -q "msg-sectooold11"; then
+  echo "  FAIL: --since 60 leaked 2min-old message"; FAIL=$((FAIL + 1))
+else
+  echo "  PASS: --since 60 excludes 2min-old message"; PASS=$((PASS + 1))
+fi
+
 print_results

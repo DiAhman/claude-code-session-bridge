@@ -31,7 +31,7 @@ assert_dir_exists() {
 
 assert_contains() {
   local desc="$1" needle="$2" haystack="$3"
-  if echo "$haystack" | grep -q "$needle"; then
+  if echo "$haystack" | grep -q -- "$needle"; then
     echo "  PASS: $desc"; PASS=$((PASS + 1))
   else
     echo "  FAIL: $desc (looking for '$needle')"; FAIL=$((FAIL + 1))
