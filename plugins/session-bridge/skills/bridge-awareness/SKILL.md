@@ -155,6 +155,11 @@ If your role is `orchestrator`, expect frequent listener relaunches. You are the
 - **Use timeout 0 (infinite).** The listener uses `inotifywait` which blocks at zero CPU until a message arrives. No polling, no cycling, no token cost while idle.
 - **Do NOT use short timeouts (e.g., 90s, 120s).** Short timeouts cause constant exit-restart cycling that burns tokens for nothing.
 - **After processing a message, start a new background listener.** The old one exited when it delivered the message. Use `run_in_background: true` again.
+- **NEVER combine `run_in_background: true` with a trailing `&`** in the same Bash invocation. `run_in_background: true` alone is sufficient — Claude Code does the backgrounding for you. Appending `&` makes the outer `bash -c` exit immediately after forking the listener, reparenting it to init and causing a process leak. The listener now detects this pattern at startup and refuses to run with `BRIDGE_STATUS=double_fork_refused`. The correct invocation is exactly:
+  ```bash
+  bash "${CLAUDE_PLUGIN_ROOT}/scripts/bridge-listen.sh" "$MY_SESSION" 0
+  ```
+  NOT `bash "${CLAUDE_PLUGIN_ROOT}/scripts/bridge-listen.sh" "$MY_SESSION" 0 &` (the trailing `&` is the bug).
 
 **MESSAGE DELIVERY ARCHITECTURE:**
 

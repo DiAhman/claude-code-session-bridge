@@ -253,6 +253,7 @@ The loop:
 - **Use timeout 0 (infinite).** The listener uses `inotifywait` which blocks at zero CPU until a file event occurs — no polling, no cycling, no token cost.
 - **Do NOT use short timeouts (e.g., 90s, 120s).** Short timeouts cause the listener to exit on timeout, which triggers a restart cycle. Each cycle burns tokens for nothing.
 - **After processing a message, start a new background listener.** The previous listener exited when it delivered the message. Use `run_in_background: true` again.
+- **NEVER combine `run_in_background: true` with a trailing `&` in the same Bash invocation.** The two together create a double-fork: the outer `bash -c` exits immediately after forking the listener, the listener gets reparented to init, and it leaks because nothing supervises it. `run_in_background: true` alone does the backgrounding correctly. The listener detects this pattern at startup and refuses with `BRIDGE_STATUS=double_fork_refused`. Correct: `bash "${CLAUDE_PLUGIN_ROOT}/scripts/bridge-listen.sh" "$MY_SESSION" 0`. Wrong: appending `&` to the same line.
 
 **MESSAGE DELIVERY ARCHITECTURE:**
 
