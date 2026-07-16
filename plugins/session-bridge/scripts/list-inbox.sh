@@ -79,8 +79,17 @@ if [ -z "$TARGET_ID" ]; then
   exit 1
 fi
 
-# Project-scope guard: only enforce on true cross-session access
-if [ -n "$CALLER_ID" ] && [ "$CALLER_ID" != "$TARGET_ID" ]; then
+# Project-scope guard: only enforce on true cross-session access.
+# Reading your own inbox (TARGET_ID == CALLER_ID, including the
+# "target omitted" default above) never needs this. Any genuine
+# cross-session read requires a caller identity — if BRIDGE_SESSION_ID
+# is unset we cannot determine the caller's project, so fail closed
+# instead of silently skipping the check.
+if [ "$TARGET_ID" != "$CALLER_ID" ]; then
+  if [ -z "$CALLER_ID" ]; then
+    echo "Error: cross-session inbox read requires BRIDGE_SESSION_ID to be set (needed for project-scope check)" >&2
+    exit 1
+  fi
   if ! assert_same_project "$CALLER_ID" "$TARGET_ID"; then
     exit 1
   fi

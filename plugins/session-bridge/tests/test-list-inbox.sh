@@ -196,4 +196,40 @@ else
   echo "  PASS: --since 60 excludes 2min-old message"; PASS=$((PASS + 1))
 fi
 
+# --- Test 13: fail-closed when BRIDGE_SESSION_ID unset + cross-session target ---
+echo ""
+echo "Test 13: unset BRIDGE_SESSION_ID + cross-session target → fails closed"
+setup_project_session "$BRIDGE_DIR" "proj-fail" "targ111" >/dev/null
+INBOX_FC="$BRIDGE_DIR/projects/proj-fail/sessions/targ111/inbox"
+NOW_TS=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+write_msg "$INBOX_FC" "msg-nosecret111" "p" "ping" "SECRET" "$NOW_TS"
+RC=0
+# BRIDGE_SESSION_ID intentionally unset via env -u
+ERR=$(env -u BRIDGE_SESSION_ID BRIDGE_DIR="$BRIDGE_DIR" bash "$LIST_INBOX" "targ111" --all 2>&1 >/dev/null) || RC=$?
+if [ "$RC" -ne 0 ]; then
+  echo "  PASS: fails closed with unset BRIDGE_SESSION_ID"; PASS=$((PASS + 1))
+else
+  echo "  FAIL: should have failed closed"; FAIL=$((FAIL + 1))
+fi
+assert_contains "stderr mentions BRIDGE_SESSION_ID" "BRIDGE_SESSION_ID" "$ERR"
+# Confirm no message content leaked in the failure output
+if echo "$ERR" | grep -q "SECRET"; then
+  echo "  FAIL: fail-closed error leaked message content"; FAIL=$((FAIL + 1))
+else
+  echo "  PASS: fail-closed error did not leak message content"; PASS=$((PASS + 1))
+fi
+
+# Impl choice: the script requires BRIDGE_SESSION_ID for ALL invocations —
+# even a "self-read" with no explicit target — because with no target given
+# it cannot resolve *any* session to read without a caller identity (this is
+# pre-existing behavior, unrelated to the cross-project guard fixed above).
+RC2=0
+ERR2=$(env -u BRIDGE_SESSION_ID BRIDGE_DIR="$BRIDGE_DIR" bash "$LIST_INBOX" 2>&1 >/dev/null) || RC2=$?
+if [ "$RC2" -ne 0 ]; then
+  echo "  PASS: self-read (no target) with unset BRIDGE_SESSION_ID also fails closed"; PASS=$((PASS + 1))
+else
+  echo "  FAIL: self-read with unset BRIDGE_SESSION_ID should fail closed"; FAIL=$((FAIL + 1))
+fi
+assert_contains "stderr mentions BRIDGE_SESSION_ID (no-target case)" "BRIDGE_SESSION_ID" "$ERR2"
+
 print_results
