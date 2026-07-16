@@ -10,14 +10,14 @@ plugins/session-bridge/
   commands/bridge.md             # /bridge command definition
   hooks/hooks.json               # SessionStart, UserPromptSubmit, PostToolUse, PreCompact, Stop, SessionEnd hooks
   skills/bridge-awareness/SKILL.md  # Agent behavior skill
-  scripts/                       # Core bash scripts (22 scripts + lib/stale-check.sh)
-  tests/                         # Test suite (26 test files, 398 tests)
+  scripts/                       # Core bash scripts (25 scripts + lib/stale-check.sh, lib/path-resolve.sh, lib/find-open-conversation.sh)
+  tests/                         # Test suite (~30 test files, ~545 tests)
   test.sh                        # Test runner
 ```
 
 ## Versioning
 
-Semantic versioning: `0.MINOR.PATCH`. Currently on `0.2.x`.
+Semantic versioning: `0.MINOR.PATCH`. Currently on `0.3.x`.
 
 - **Patch bump** (`0.2.x → 0.2.x+1`): bug fixes, new scripts, test additions, doc updates
 - **Minor bump** (`0.2.x → 0.3.0`): breaking protocol changes, new message types that break backward compat
@@ -79,6 +79,12 @@ The bidirectional, project-scoped, autonomous multi-session orchestration system
 - **Persistence-first cleanup**: nothing is auto-deleted — `bridge-listen.log`, `<inbox>/.delivered/`, conversations, manifests, inboxes, outboxes all survive indefinitely. Disk maintenance is operator-controlled via `/bridge prune --delivered N --outbox N --conversations N --logs N`.
 - **Stale detection**: on-demand only (during `send-message.sh` delivery and `/bridge peers` listing). Uses `<session-dir>/heartbeat` file content + PID-liveness check on `heartbeat-daemon.pid`. PID-liveness backstop prevents false positives across laptop sleep/wake.
 - **`recipient-stale` notification**: sending to a stale recipient still delivers the message (it queues in the inbox) AND emits a `recipient-stale` notification back to the sender so the orchestrator surfaces the unresponsive state to the user.
+- **Lifecycle flag (`manifest.lifecycle`)** — additive field separate from `status`. Values: `normal` (default) or `compacting`. `PreCompact` hook flips it to `compacting`; the first `UserPromptSubmit` after compaction (via `clear-compacting.sh`, wired BEFORE `check-inbox.sh`) flips it back to `normal`. `list-peers.sh` surfaces `active (compacting)`; `send-message.sh` emits a once-per-60s stderr warning when a recipient is mid-compaction.
+- **Heartbeat-on-traffic + self-heal** — `send-message.sh` and `bridge-listen.sh` call `write_heartbeat` on every successful message exchange (best-effort, never blocks delivery). `send-message.sh` also calls `ensure_producer_alive` which detached-relaunches a dead `heartbeat-daemon.sh` via `setsid nohup … </dev/null >/dev/null 2>&1 &`. Liveness is now ground truth, not a sidecar guess.
+- **`/bridge inbox [<session>]` triage subcommand** — operator + agent visibility into pending/delivered messages for any peer in the same project. Backed by `scripts/list-inbox.sh`, gated by `assert_same_project` so cross-project enumeration is refused. Supports `--pending|--delivered|--all`, `--since <duration>`, `--json`, `--limit N`.
+- **Conversation auto-resume-or-create** — `send-message.sh` without `--conversation` now calls `find_open_conversation <sender> <recipient> <project>`. Single open match → silently attaches and emits stderr `auto-attached to <conv-id>`. Zero matches → creates fresh conversation. Multiple matches → refuses with stderr `Multiple open conversations: <id1> <id2>` (exit 2) so the operator picks explicitly.
+- **Standby double-fork guard** — `bridge-listen.sh` refuses to start when (a) `$PPID` is dead/zombie AND (b) `/proc/$PPID/cmdline` matches `^bash -c .* &$`. Operator escape hatch: `BRIDGE_INTENTIONAL_DOUBLE_FORK=1`. Prevents the runaway-listener footgun without disturbing normal Claude Code launch.
+- **Plaintext persistence** — all bridge files (`<inbox>/*`, `outbox/*`, `conversations/*`, `bridge-listen.log`) are plaintext JSON on local disk under `~/.claude/session-bridge/`. Do NOT send secrets, credentials, API keys, or PII through the bridge. See SKILL.md for the operator-facing warning.
 
 ### v2 Backward Compatibility
 
