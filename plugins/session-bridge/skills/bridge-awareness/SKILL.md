@@ -222,6 +222,21 @@ Every peer manifest carries one of these `status` values:
 - **`stale`** — was supposed to be active but the heartbeat producer died unexpectedly (crash, kill, terminal closed without clean shutdown). Messages still land in the inbox, but the peer is **not** processing them. If you send to a `stale` peer, the bridge will emit a `recipient-stale` notification back to you.
 - **`removed`** — explicitly removed from the project (`/bridge remove <id>`). Terminal — that session ID is gone for good. Any open conversations initiated by the removed session are auto-resolved with reason "Session removed".
 
+#### Lifecycle Flag (compaction visibility)
+
+In addition to `status`, each manifest carries a `lifecycle` field with two values:
+
+- **`normal`** — default. Session is processing inbox messages normally.
+- **`compacting`** — set by the `PreCompact` hook while Claude Code compacts this session's context window. The session is briefly unable to respond (typically 10–60s). Cleared automatically on the next `UserPromptSubmit`.
+
+`list-peers.sh` shows compacting peers as `active (compacting)` in the STATUS column. `send-message.sh` will print a rate-limited stderr warning (once per 60s per recipient) when you send to a compacting peer:
+
+```
+Warning: recipient <session-id> compacting — response may be delayed
+```
+
+The message is still delivered — it queues in the inbox and the peer will process it once compaction finishes. Do not retry, reroute, or escalate based on this warning alone; just expect a slightly delayed response.
+
 ### Step 3: Ask the Orchestrator
 
 If no match found, send a `routing-query` to the orchestrator:
