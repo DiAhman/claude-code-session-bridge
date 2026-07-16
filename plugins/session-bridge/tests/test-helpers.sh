@@ -66,3 +66,40 @@ print_results() {
   echo "Results: $PASS passed, $FAIL failed"
   [ "$FAIL" -eq 0 ] || exit 1
 }
+
+# setup_project_session — fabricate a project-scoped session for tests.
+# Usage: setup_project_session <bridge-dir> <project-name> <session-id> [role] [name]
+# Echoes absolute session-dir on stdout. Returns nonzero on failure.
+setup_project_session() {
+  local BD="$1" PROJ="$2" SID="$3"
+  local ROLE="${4:-specialist}" NAME="${5:-$3}"
+  local SDIR="$BD/projects/$PROJ/sessions/$SID"
+  mkdir -p "$SDIR/inbox" "$SDIR/outbox" "$BD/projects/$PROJ/conversations" || return 1
+  local NOW
+  NOW=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+  local TMP
+  TMP=$(mktemp "$SDIR/manifest.XXXXXX") || return 1
+  jq -n \
+    --arg sid "$SID" \
+    --arg pid "$PROJ" \
+    --arg pname "$PROJ" \
+    --arg name "$NAME" \
+    --arg role "$ROLE" \
+    --arg now "$NOW" \
+    '{
+      sessionId: $sid,
+      projectId: $pid,
+      projectName: $pname,
+      role: $role,
+      name: $name,
+      status: "active",
+      lifecycle: "normal",
+      startedAt: $now,
+      lastHeartbeat: $now
+    }' > "$TMP" \
+    && mv "$TMP" "$SDIR/manifest.json" \
+    || { rm -f "$TMP"; return 1; }
+  printf '%s' "$NOW" > "$SDIR/heartbeat" || return 1
+  printf '%s' "0" > "$SDIR/heartbeat-daemon.pid" || return 1
+  echo "$SDIR"
+}
