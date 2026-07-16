@@ -31,8 +31,8 @@ for PROJ_JSON in "$BRIDGE_DIR"/projects/*/project.json; do
   PROJ_SESSIONS_DIR="$(dirname "$PROJ_JSON")/sessions"
   echo ""
   echo "Project: $PROJ_NAME"
-  printf "  %-10s %-20s %-12s %-15s %s\n" "SESSION" "NAME" "ROLE" "STATUS" "SPECIALTY"
-  printf "  %-10s %-20s %-12s %-15s %s\n" "-------" "----" "----" "------" "---------"
+  printf "  %-10s %-20s %-12s %-20s %s\n" "SESSION" "NAME" "ROLE" "STATUS" "SPECIALTY"
+  printf "  %-10s %-20s %-12s %-20s %s\n" "-------" "----" "----" "------" "---------"
 
   for MANIFEST in "$PROJ_SESSIONS_DIR"/*/manifest.json; do
     [ -f "$MANIFEST" ] || continue
@@ -41,6 +41,7 @@ for PROJ_JSON in "$BRIDGE_DIR"/projects/*/project.json; do
     ROLE=$(jq -r '.role // ""' "$MANIFEST")
     SPEC=$(jq -r '.specialty // ""' "$MANIFEST")
     MANIFEST_STATUS=$(jq -r '.status // "active"' "$MANIFEST")
+    LIFECYCLE=$(jq -r '.lifecycle // "normal"' "$MANIFEST")
     SESSION_PATH="$(dirname "$MANIFEST")"
 
     # Determine display status:
@@ -65,7 +66,14 @@ for PROJ_JSON in "$BRIDGE_DIR"/projects/*/project.json; do
         ;;
     esac
 
-    printf "  %-10s %-20s %-12s %-15s %s\n" "$SID" "$PNAME" "$ROLE" "$STATUS" "$SPEC"
+    # Append "(compacting)" suffix only for live-active sessions
+    if [ "$STATUS" = "active" ] && [ "$LIFECYCLE" = "compacting" ]; then
+      DISPLAY_STATUS="active (compacting)"
+    else
+      DISPLAY_STATUS="$STATUS"
+    fi
+
+    printf "  %-10s %-20s %-12s %-20s %s\n" "$SID" "$PNAME" "$ROLE" "$DISPLAY_STATUS" "$SPEC"
     FOUND=$((FOUND + 1))
   done
 done

@@ -109,6 +109,34 @@ if [ -n "$SENDER_PROJECT_ID" ] && [ "$MSG_TYPE" != "recipient-stale" ]; then
   fi
 fi
 
+# --- Compacting-recipient warning (rate-limited 60s per (sender,recipient)) ---
+# When the target session is mid-compaction we still deliver the message, but
+# surface a one-line stderr warning so the calling agent knows a response may
+# be delayed. Rate-limited via mtime of <sender-dir>/.compact-warned-<target>
+# so a burst of sends doesn't spam the transcript.
+if [ -n "$SENDER_PROJECT_ID" ] && [ "$MSG_TYPE" != "recipient-stale" ]; then
+  TARGET_MANIFEST_FOR_LC="$BRIDGE_DIR/projects/$SENDER_PROJECT_ID/sessions/$TARGET_ID/manifest.json"
+  if [ -f "$TARGET_MANIFEST_FOR_LC" ]; then
+    TARGET_LC=$(jq -r '.lifecycle // "normal"' "$TARGET_MANIFEST_FOR_LC" 2>/dev/null)
+    if [ "$TARGET_LC" = "compacting" ]; then
+      SENDER_DIR_FOR_WARN="$BRIDGE_DIR/projects/$SENDER_PROJECT_ID/sessions/$SENDER_ID"
+      WARN_FILE="$SENDER_DIR_FOR_WARN/.compact-warned-$TARGET_ID"
+      EMIT_WARN=true
+      if [ -f "$WARN_FILE" ]; then
+        WARN_MTIME=$(stat -c %Y "$WARN_FILE" 2>/dev/null || stat -f %m "$WARN_FILE" 2>/dev/null || echo 0)
+        NOW_EPOCH_W=$(date -u +%s)
+        AGE_W=$((NOW_EPOCH_W - WARN_MTIME))
+        [ "$AGE_W" -lt 60 ] && EMIT_WARN=false
+      fi
+      if [ "$EMIT_WARN" = true ]; then
+        echo "Warning: recipient $TARGET_ID compacting — response may be delayed" >&2
+        mkdir -p "$SENDER_DIR_FOR_WARN" 2>/dev/null || true
+        : > "$WARN_FILE" 2>/dev/null || true
+      fi
+    fi
+  fi
+fi
+
 # --- Conversation management (project-scoped sessions only) ---
 CONV_FREE_TYPES=" ping session-ended routing-query recipient-stale session-removed "
 CONV_CREATE_TYPES=" task-assign escalate "
