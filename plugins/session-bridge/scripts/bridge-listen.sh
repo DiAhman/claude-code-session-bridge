@@ -41,6 +41,53 @@ else
   TIMEOUT="${1:-0}"
 fi
 
+# --- Double-fork suicide-launch guard (issue #18) ---
+# If Claude Code invokes this script with run_in_background:true AND a trailing
+# `&` in the same `bash -c` command, the outer bash exits immediately after
+# forking us, reparenting this process to init (PID 1). We then lose our
+# supervising shell, the standby loop accumulates as a leak, and the agent
+# cannot tell the listener is dead. Detect that exact pattern and refuse.
+#
+# Conditions (ALL must hold to refuse):
+#   (a) $PPID is dead or in zombie state
+#   (b) /proc/$PPID/cmdline (NUL-joined with spaces) matches '^bash -c .* &$'
+#   (c) BRIDGE_INTENTIONAL_DOUBLE_FORK is not set (escape hatch for power users)
+#
+# Test-only env vars (NEVER set in production):
+#   BRIDGE_FAKE_PPID, BRIDGE_FAKE_PPID_CMDLINE, BRIDGE_FAKE_PPID_DEAD
+# Tests use these to stub PPID + /proc lookups deterministically without
+# spawning a real zombie (which is timing-dependent across hosts).
+if [ -n "${BRIDGE_FAKE_PPID:-}" ]; then
+  _PARENT_PID="$BRIDGE_FAKE_PPID"
+  _PARENT_CMDLINE="${BRIDGE_FAKE_PPID_CMDLINE:-}"
+  if [ "${BRIDGE_FAKE_PPID_DEAD:-0}" = "1" ]; then
+    _PARENT_DEAD=true
+  else
+    _PARENT_DEAD=false
+  fi
+else
+  _PARENT_PID="$PPID"
+  _PARENT_DEAD=false
+  if ! kill -0 "$_PARENT_PID" 2>/dev/null; then
+    _PARENT_DEAD=true
+  elif [ -r "/proc/$_PARENT_PID/stat" ]; then
+    _PARENT_STATE=$(awk '{print $3}' "/proc/$_PARENT_PID/stat" 2>/dev/null || echo "")
+    [ "$_PARENT_STATE" = "Z" ] && _PARENT_DEAD=true
+  fi
+  _PARENT_CMDLINE=""
+  if [ -r "/proc/$_PARENT_PID/cmdline" ]; then
+    _PARENT_CMDLINE=$(tr '\0' ' ' < "/proc/$_PARENT_PID/cmdline" 2>/dev/null | sed 's/ $//')
+  fi
+fi
+
+if [ "$_PARENT_DEAD" = "true" ] \
+   && echo "$_PARENT_CMDLINE" | grep -qE '^bash -c .* &$' \
+   && [ -z "${BRIDGE_INTENTIONAL_DOUBLE_FORK:-}" ]; then
+  echo "BRIDGE_STATUS=double_fork_refused"
+  echo "bridge-listen refused: detected backgrounded-via-shell-& pattern. Use run_in_background:true alone OR set BRIDGE_INTENTIONAL_DOUBLE_FORK=1" >&2
+  exit 1
+fi
+
 # Resolve inbox and session dir: project-scoped first, legacy fallback
 INBOX=""
 SESSION_DIR=""
