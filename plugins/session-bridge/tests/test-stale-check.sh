@@ -220,4 +220,78 @@ else
   echo "  PASS: set_lifecycle returned nonzero for missing manifest"; PASS=$((PASS + 1))
 fi
 
+# --- Test 16: ensure_producer_alive spawns daemon when none exists (critique C3) ---
+echo ""
+echo "Test 16: ensure_producer_alive spawns heartbeat-daemon when PID file missing"
+BRIDGE_DIR_16="$TEST_TMPDIR/bridge16"
+SESSION_DIR_16=$(setup_project_session "$BRIDGE_DIR_16" "proj16" "epa016" "specialist" "s16")
+# setup_project_session writes "0" to heartbeat-daemon.pid — remove it to simulate "no daemon"
+rm -f "$SESSION_DIR_16/heartbeat-daemon.pid"
+
+# C3(a): the call must return promptly — it must NOT block on the spawned
+# daemon's lifetime (the daemon loops forever on a 60s-default sleep).
+CALL_START_NS=$(date +%s%N)
+ensure_producer_alive "$SESSION_DIR_16"
+CALL_END_NS=$(date +%s%N)
+CALL_MS=$(( (CALL_END_NS - CALL_START_NS) / 1000000 ))
+if [ "$CALL_MS" -lt 3000 ]; then
+  echo "  PASS: ensure_producer_alive returned without hanging on the child (${CALL_MS}ms)"; PASS=$((PASS + 1))
+else
+  echo "  FAIL: ensure_producer_alive took ${CALL_MS}ms — looks like it blocked on the spawned daemon"; FAIL=$((FAIL + 1))
+fi
+
+# C3(c): the PID file must already exist the instant the call returns — no
+# polling loop here on purpose. If the implementation ever regresses to a
+# blind "sleep N then hope" strategy instead of waiting on the PID file
+# itself, this assertion is what catches it.
+assert_file_exists "PID file written by spawned daemon BEFORE ensure_producer_alive returned" "$SESSION_DIR_16/heartbeat-daemon.pid"
+SPAWNED_PID=$(cat "$SESSION_DIR_16/heartbeat-daemon.pid" 2>/dev/null || echo "")
+if [ -n "$SPAWNED_PID" ] && kill -0 "$SPAWNED_PID" 2>/dev/null; then
+  echo "  PASS: spawned daemon PID is alive ($SPAWNED_PID)"; PASS=$((PASS + 1))
+else
+  echo "  FAIL: spawned daemon PID is not alive (got '$SPAWNED_PID')"; FAIL=$((FAIL + 1))
+fi
+
+# C3(b): no file descriptor inherited from the caller — spawned daemon's
+# stdin/stdout/stderr must connect to /dev/null, not this test's tty/pipe.
+if [ -n "$SPAWNED_PID" ] && [ -d "/proc/$SPAWNED_PID/fd" ]; then
+  FD0=$(readlink -f "/proc/$SPAWNED_PID/fd/0" 2>/dev/null || echo "unreadable")
+  FD1=$(readlink -f "/proc/$SPAWNED_PID/fd/1" 2>/dev/null || echo "unreadable")
+  FD2=$(readlink -f "/proc/$SPAWNED_PID/fd/2" 2>/dev/null || echo "unreadable")
+  assert_eq "spawned daemon stdin is /dev/null (not caller's fd)" "/dev/null" "$FD0"
+  assert_eq "spawned daemon stdout is /dev/null (not caller's fd)" "/dev/null" "$FD1"
+  assert_eq "spawned daemon stderr is /dev/null (not caller's fd)" "/dev/null" "$FD2"
+else
+  echo "  SKIP: /proc/<pid>/fd not available on this platform — cannot verify fd detachment"
+fi
+
+# Wait briefly for the daemon to write its first heartbeat, then clean up
+for _ in 1 2 3 4 5 6 7 8 9 10; do
+  [ -s "$SESSION_DIR_16/heartbeat" ] && break
+  sleep 0.1
+done
+assert_file_exists "spawned daemon wrote heartbeat" "$SESSION_DIR_16/heartbeat"
+[ -n "$SPAWNED_PID" ] && kill -TERM "$SPAWNED_PID" 2>/dev/null || true
+# Give the EXIT trap a moment to run before TMPDIR cleanup
+sleep 0.2
+
+# --- Test 17: ensure_producer_alive is no-op when daemon already alive ---
+echo ""
+echo "Test 17: ensure_producer_alive does not relaunch when daemon already alive"
+BRIDGE_DIR_17="$TEST_TMPDIR/bridge17"
+SESSION_DIR_17=$(setup_project_session "$BRIDGE_DIR_17" "proj17" "epa017" "specialist" "s17")
+rm -f "$SESSION_DIR_17/heartbeat-daemon.pid"
+# First call: spawns (PID file guaranteed to exist immediately after, per C3(c))
+ensure_producer_alive "$SESSION_DIR_17"
+FIRST_PID=$(cat "$SESSION_DIR_17/heartbeat-daemon.pid" 2>/dev/null || echo "")
+# Second call: must be a no-op (PID still alive)
+ensure_producer_alive "$SESSION_DIR_17"
+SECOND_PID=$(cat "$SESSION_DIR_17/heartbeat-daemon.pid" 2>/dev/null || echo "")
+assert_eq "PID unchanged after second ensure_producer_alive" "$FIRST_PID" "$SECOND_PID"
+# Verify only one heartbeat-daemon is running against this session-dir
+DAEMON_COUNT=$(pgrep -af "heartbeat-daemon.sh $SESSION_DIR_17" 2>/dev/null | wc -l | tr -d ' ')
+assert_eq "exactly one heartbeat-daemon process running" "1" "$DAEMON_COUNT"
+[ -n "$FIRST_PID" ] && kill -TERM "$FIRST_PID" 2>/dev/null || true
+sleep 0.2
+
 print_results
