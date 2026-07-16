@@ -1,6 +1,6 @@
 ---
 name: bridge
-description: Peer-to-peer communication between Claude Code sessions - start, connect, listen, ask, peers, status, close, remove, prune
+description: Peer-to-peer communication between Claude Code sessions - start, connect, listen, ask, peers, status, inbox, close, remove, prune
 argument-hint: "<action> [args]"
 allowed-tools:
   - Bash
@@ -323,6 +323,27 @@ Show pending human-input-needed messages that require the user's decision.
 
 5. If no decisions are pending, say "No pending decisions."
 
+### `inbox [<session-id>] [--pending|--delivered|--all] [--since N(s|m|h|d)] [--limit N] [--json]`
+
+Show a forensics view of any same-project session's inbox. With no session-id, lists your own inbox.
+
+1. Get your session ID:
+   ```bash
+   MY_SESSION=$(bash "${CLAUDE_PLUGIN_ROOT}/scripts/get-session-id.sh")
+   ```
+   If it fails, say "Bridge is not active. Run `/bridge project join <name>` or `/bridge start` to begin." and stop.
+
+2. Run the list script. Pass the target session (default: yourself) and any user-provided flags through:
+   ```bash
+   BRIDGE_SESSION_ID="$MY_SESSION" bash "${CLAUDE_PLUGIN_ROOT}/scripts/list-inbox.sh" [<session-id>] [flags]
+   ```
+
+   Defaults: `--pending` only. Use `--all` to include delivered messages, `--delivered` for delivered only, `--since 1h` to restrict by recency, `--limit 20` to cap output, `--json` for machine-readable output.
+
+3. Display the table (or JSON) as-is. If the script prints `No messages.`, say "Inbox is empty."
+
+4. If the script exits nonzero (e.g., target session is in a different project, or the session id doesn't exist), surface the stderr message verbatim — it's already operator-friendly.
+
 ### `/bridge close`
 
 Gracefully close this session — transitions status to `offline`, kills the heartbeat daemon and inbox-watcher, preserves the session directory and all state (inbox, outbox, logs, conversations) for later resumption. Used when you're done for the day but expect to come back to the same specialist later.
@@ -457,6 +478,7 @@ Bridge commands:
     /bridge status                    - Show bridge state and conversations
     /bridge standby                   - Listen and handle peer messages (blocks)
     /bridge decisions                 - Show pending human-input-needed queue
+    /bridge inbox [<id>] [--flags]    - Triage view of any same-project inbox
     /bridge close                     - Gracefully go offline (preserves state)
     /bridge remove <id>               - Destructively remove a session from the project
     /bridge prune [--flags]           - Operator-controlled disk maintenance
