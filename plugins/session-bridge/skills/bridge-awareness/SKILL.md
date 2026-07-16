@@ -282,6 +282,20 @@ BRIDGE_SESSION_ID="$MY_SESSION" bash "${CLAUDE_PLUGIN_ROOT}/scripts/send-message
 
 ---
 
+## Auto-attached conversations
+
+On a project-scoped session, `send-message.sh` will auto-attach the message to an existing open conversation when `--conversation` is omitted. This is common — you often don't have the conv-id in context after a compaction or long delegation.
+
+Three outcomes:
+
+1. **Exactly one open conversation** with the recipient → attached, `auto-attached to <conv-id>` printed to stderr. **You will see this line in Bash tool output.** It is informational, not an error. Send succeeded; do not re-invoke.
+2. **Zero open conversations** → error directs you to `list-inbox.sh` (see "Verifying a peer's inbox") to find the conv-id, then re-invoke with `--conversation <id>`.
+3. **Multiple open conversations** → error lists candidates; pick one and re-invoke with `--conversation <id>`.
+
+`task-assign` / `escalate` / `query` still auto-CREATE a fresh conversation (unchanged from prior versions — no stderr line). Auto-ATTACH only fires for reply-style types (`response`, `task-update`, `task-complete`, etc.).
+
+---
+
 ## Receiving Messages
 
 ### During Active Work (Hook-Driven)
