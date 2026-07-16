@@ -114,7 +114,7 @@ fi
 # surface a one-line stderr warning so the calling agent knows a response may
 # be delayed. Rate-limited via mtime of <sender-dir>/.compact-warned-<target>
 # so a burst of sends doesn't spam the transcript.
-if [ -n "$SENDER_PROJECT_ID" ] && [ "$MSG_TYPE" != "recipient-stale" ]; then
+if [ -n "$SENDER_PROJECT_ID" ] && [ "$MSG_TYPE" != "recipient-stale" ] && [ "$MSG_TYPE" != "session-removed" ]; then
   TARGET_MANIFEST_FOR_LC="$BRIDGE_DIR/projects/$SENDER_PROJECT_ID/sessions/$TARGET_ID/manifest.json"
   if [ -f "$TARGET_MANIFEST_FOR_LC" ]; then
     TARGET_LC=$(jq -r '.lifecycle // "normal"' "$TARGET_MANIFEST_FOR_LC" 2>/dev/null)

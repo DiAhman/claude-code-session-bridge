@@ -5,7 +5,7 @@
 # MUST always exit 0 — a failure here would block the user's prompt.
 # Env: BRIDGE_SESSION_ID (optional — silently no-op if unset),
 #      BRIDGE_DIR (default ~/.claude/session-bridge)
-set -uo pipefail
+set -euo pipefail
 
 _clear_compacting_main() {
   [ -n "${BRIDGE_SESSION_ID:-}" ] || return 0

@@ -4,7 +4,7 @@
 # MUST always exit 0 — a failure here would block context compaction.
 # Env: BRIDGE_SESSION_ID (optional — silently no-op if unset),
 #      BRIDGE_DIR (default ~/.claude/session-bridge)
-set -uo pipefail
+set -euo pipefail
 
 _pre_compact_main() {
   [ -n "${BRIDGE_SESSION_ID:-}" ] || return 0

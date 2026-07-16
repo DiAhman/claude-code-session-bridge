@@ -150,4 +150,21 @@ else
   echo "  PASS: no warning for non-compacting recipient"; PASS=$((PASS + 1))
 fi
 
+
+# --- Test 12: no warning when MSG_TYPE=session-removed, even if recipient is compacting ---
+echo ""
+echo "Test 12: send-message.sh does not warn for session-removed even when recipient compacting"
+BRIDGE_DIR="$BRIDGE_DIR" BRIDGE_SESSION_ID="$TARGET_ID" bash "$PRE_COMPACT"
+rm -f "$SENDER_DIR/.compact-warned-$TARGET_ID"
+STDOUT5=$(BRIDGE_DIR="$BRIDGE_DIR" BRIDGE_SESSION_ID="$SENDER_ID" bash "$SEND_MSG" \
+  "$TARGET_ID" session-removed "session removed" 2>"$TEST_TMPDIR/stderr5")
+STDERR5=$(cat "$TEST_TMPDIR/stderr5")
+if echo "$STDERR5" | grep -q "compacting"; then
+  echo "  FAIL: should not warn for session-removed to compacting recipient (stderr: $STDERR5)"; FAIL=$((FAIL + 1))
+else
+  echo "  PASS: no warning for session-removed to compacting recipient"; PASS=$((PASS + 1))
+fi
+SR_MSG_ID="$STDOUT5"
+assert_file_exists "session-removed still delivered to target inbox" "$TARGET_DIR/inbox/$SR_MSG_ID.json"
+
 print_results
