@@ -230,14 +230,19 @@ rm -f "$SESSION_DIR_16/heartbeat-daemon.pid"
 
 # C3(a): the call must return promptly — it must NOT block on the spawned
 # daemon's lifetime (the daemon loops forever on a 60s-default sleep).
-CALL_START_NS=$(date +%s%N)
-ensure_producer_alive "$SESSION_DIR_16"
-CALL_END_NS=$(date +%s%N)
-CALL_MS=$(( (CALL_END_NS - CALL_START_NS) / 1000000 ))
-if [ "$CALL_MS" -lt 3000 ]; then
-  echo "  PASS: ensure_producer_alive returned without hanging on the child (${CALL_MS}ms)"; PASS=$((PASS + 1))
+# Note: seconds granularity (not `date +%s%N`) — %N is a GNU-only extension;
+# BSD/macOS `date` passes it through literally (e.g. "1737033717N"), which
+# crashes the arithmetic below. `date +%s` is POSIX and portable. 1-second
+# granularity is sufficient here: the intent is "didn't hang," not precise
+# timing — well under 60s is the bar per the task brief.
+CALL_START=$(date -u +%s)
+ensure_producer_alive "$SESSION_DIR_16" || true
+CALL_END=$(date -u +%s)
+ELAPSED=$(( CALL_END - CALL_START ))
+if [ "$ELAPSED" -lt 3 ]; then
+  echo "  PASS: ensure_producer_alive returned without hanging on the child (${ELAPSED}s)"; PASS=$((PASS + 1))
 else
-  echo "  FAIL: ensure_producer_alive took ${CALL_MS}ms — looks like it blocked on the spawned daemon"; FAIL=$((FAIL + 1))
+  echo "  FAIL: ensure_producer_alive took ${ELAPSED}s — looks like it blocked on the spawned daemon"; FAIL=$((FAIL + 1))
 fi
 
 # C3(c): the PID file must already exist the instant the call returns — no
@@ -292,6 +297,39 @@ assert_eq "PID unchanged after second ensure_producer_alive" "$FIRST_PID" "$SECO
 DAEMON_COUNT=$(pgrep -af "heartbeat-daemon.sh $SESSION_DIR_17" 2>/dev/null | wc -l | tr -d ' ')
 assert_eq "exactly one heartbeat-daemon process running" "1" "$DAEMON_COUNT"
 [ -n "$FIRST_PID" ] && kill -TERM "$FIRST_PID" 2>/dev/null || true
+sleep 0.2
+
+# --- Test 18: ensure_producer_alive is spawn-at-most-one under concurrency (flock mutex) ---
+echo ""
+echo "Test 18: ensure_producer_alive spawn-at-most-one under concurrent calls"
+BRIDGE_DIR_18="$TEST_TMPDIR/bridge18"
+SESSION_DIR_18=$(setup_project_session "$BRIDGE_DIR_18" "proj18" "epa018" "specialist" "s18")
+# setup_project_session writes "0" to heartbeat-daemon.pid — remove it to simulate "no daemon"
+rm -f "$SESSION_DIR_18/heartbeat-daemon.pid"
+
+# Fire 5 concurrent ensure_producer_alive calls against the same session-dir.
+# Without the flock mutex, multiple callers could each observe "dead" between
+# the liveness check and the spawn, and each spawn their own daemon.
+for _ in 1 2 3 4 5; do
+  ( ensure_producer_alive "$SESSION_DIR_18" ) &
+done
+wait
+
+# Give any (incorrectly) duplicate daemons a moment to fully register before counting.
+sleep 1
+
+DAEMON_COUNT_18=$(pgrep -af "heartbeat-daemon.sh $SESSION_DIR_18" 2>/dev/null | wc -l | tr -d ' ')
+if [ "$DAEMON_COUNT_18" -eq 1 ]; then
+  echo "  PASS: exactly one heartbeat-daemon spawned under 5 concurrent callers"; PASS=$((PASS + 1))
+else
+  echo "  FAIL: expected 1 heartbeat-daemon, found $DAEMON_COUNT_18"; FAIL=$((FAIL + 1))
+  pgrep -af "heartbeat-daemon.sh $SESSION_DIR_18" 2>/dev/null || true
+fi
+
+# Cleanup: kill the daemon so it doesn't linger past the test run.
+if [ -f "$SESSION_DIR_18/heartbeat-daemon.pid" ]; then
+  kill -TERM "$(cat "$SESSION_DIR_18/heartbeat-daemon.pid")" 2>/dev/null || true
+fi
 sleep 0.2
 
 print_results
