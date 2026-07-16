@@ -66,16 +66,10 @@ trap 'exit 130' INT
 echo "$$" > "$PID_FILE"
 _log "START interval=${HEARTBEAT_INTERVAL}s session_dir=$SESSION_DIR"
 
-# Write an initial heartbeat immediately so consumers don't see a stale window
-_write_heartbeat() {
-  local NOW TMP
-  NOW=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
-  TMP=$(mktemp "$SESSION_DIR/heartbeat.XXXXXX")
-  echo "$NOW" > "$TMP"
-  mv "$TMP" "$HB_FILE" 2>/dev/null || rm -f "$TMP"
-}
-
-_write_heartbeat
+# Write an initial heartbeat immediately so consumers don't see a stale window.
+# write_heartbeat (from lib/stale-check.sh) is the single canonical implementation —
+# shared with send-message.sh and bridge-listen.sh's on-traffic heartbeat bumps (#19).
+write_heartbeat "$SESSION_DIR"
 
 # Main loop: tick every HEARTBEAT_INTERVAL seconds
 while true; do
@@ -85,5 +79,5 @@ while true; do
   wait "$SLEEP_PID" 2>/dev/null || true
   # Confirm manifest still exists; if not, the session was removed — exit
   [ -f "$MANIFEST" ] || exit 0
-  _write_heartbeat
+  write_heartbeat "$SESSION_DIR"
 done
