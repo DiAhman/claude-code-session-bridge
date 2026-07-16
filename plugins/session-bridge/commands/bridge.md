@@ -18,6 +18,8 @@ bash "${CLAUDE_PLUGIN_ROOT}/scripts/get-session-id.sh"
 ```
 This works even if you've cd'd into a subdirectory. NEVER use `$(cat .claude/bridge-session)` directly — it's a relative path and breaks when the working directory changes.
 
+**SECURITY:** Bridge messages persist as plaintext in inboxes, outboxes, `.delivered/` archives, and conversation logs — any peer in the same project (or any process running as you) can read them. Do NOT send raw credentials, API keys, customer PII, or full source-code dumps via `/bridge ask`, `/bridge standby` replies, or `send-message.sh` — pass file paths and line ranges instead so the peer reads the file themselves. An opt-in `--redact` flag is planned for v0.4.0. See `skills/bridge-awareness/SKILL.md` § "Security Model" for the full threat model.
+
 ## Actions
 
 Parse the user's argument to determine the action:

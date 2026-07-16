@@ -179,6 +179,25 @@ Do NOT delete `bridge-listen.lock`. Do NOT use `killall`. The user can resume wi
 
 ---
 
+## Wake-from-Cold: Drain the Inbox Before Standby
+
+Bridge messages may arrive while your session is offline. On a resume from a cold start (a new turn after `/exit`, a laptop wake, or crash-recovery), those messages sit in your inbox waiting for action. `/bridge standby` is a listener for *future* messages — it does not surface the pre-queued backlog. Launching standby immediately on the first turn buries any pre-queued directive under the standby wait-loop, and the message becomes a silent stall for whoever sent it.
+
+**On every wake-from-cold, before launching standby:**
+
+1. Look for the `pending:` count in the SessionStart hook's check-inbox summary (emitted as an early system message on the first turn).
+2. If `pending > 0`, drain the backlog explicitly:
+
+   ```bash
+   bash "${CLAUDE_PLUGIN_ROOT}/scripts/check-inbox.sh"
+   ```
+
+3. Act on each pre-queued message (respond, delegate, ack — whatever the message type calls for) BEFORE invoking `/bridge standby`.
+
+A pre-queued `task-assign` swallowed by an immediate standby is a silent stall for the orchestrator on the other end. If you cannot find a message that a peer claims they sent, cross-check with the peer's outbox and your inbox archive using the guidance in "Verifying a peer's inbox" (added in Task 3).
+
+---
+
 ## Getting Your Session ID
 
 Always use `get-session-id.sh` — it works even if you've cd'd into a subdirectory:
@@ -313,6 +332,30 @@ Three outcomes:
 3. **Multiple open conversations** → error lists candidates; pick one and re-invoke with `--conversation <id>`.
 
 `task-assign` / `escalate` / `query` still auto-CREATE a fresh conversation (unchanged from prior versions — no stderr line). Auto-ATTACH only fires for reply-style types (`response`, `task-update`, `task-complete`, etc.).
+
+---
+
+## Security Model
+
+Bridge messages are **plaintext on disk**. Every message you send is persisted in multiple places:
+
+- The recipient's inbox: `<bridge-dir>/projects/<project>/sessions/<id>/inbox/*.json`
+- Your own outbox: `<bridge-dir>/projects/<project>/sessions/<id>/outbox/*.json`
+- After delivery: `<inbox>/.delivered/*.json` (kept indefinitely — operator-controlled pruning only, via `/bridge prune`)
+- The conversation log: `<bridge-dir>/projects/<project>/conversations/conv-*.json`
+
+Any session in the same project — and any process running as the same OS user — can read every other session's directory. There is no encryption, no per-session isolation, and no automatic redaction. Treat the bridge as a shared, append-only, world-readable channel scoped to your user account.
+
+**Do NOT send via bridge messages:**
+
+- Raw credentials, API keys, tokens, passwords, OAuth secrets
+- Customer PII (names, emails, addresses, account IDs, phone numbers)
+- Full source-code dumps — paste a file path and line range instead, the peer can `Read` the actual file
+- Anything you would not paste into a shared chat channel on this machine
+
+**Do** pass file paths, line ranges, function names, error fingerprints, commit SHAs, and one-paragraph summaries. The peer has filesystem access — let them open the file themselves.
+
+An opt-in `--redact` flag on `send-message.sh` is planned for v0.4.0 to scrub common secret patterns (AWS keys, JWT tokens, `password=`, `Bearer …`) before the message is written to disk. Until then, redaction is your responsibility.
 
 ---
 
