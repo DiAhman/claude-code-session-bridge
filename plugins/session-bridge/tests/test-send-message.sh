@@ -256,4 +256,120 @@ fi
 # Cleanup
 rm -rf "$S_TMPDIR"
 
+echo ""
+echo "--- Auto-resume conversation tests (Task 4) ---"
+
+AR_TMPDIR=$(mktemp -d)
+AR_BRIDGE="$AR_TMPDIR/bridge"
+mkdir -p "$AR_BRIDGE/projects/ar-proj/conversations"
+
+# Two project-scoped sessions, set up directly via test helper (no daemons)
+AR_SENDER="aaaaaa"
+AR_TARGET="bbbbbb"
+setup_project_session "$AR_BRIDGE" "ar-proj" "$AR_SENDER" specialist sender > /dev/null
+setup_project_session "$AR_BRIDGE" "ar-proj" "$AR_TARGET" specialist target > /dev/null
+
+AR_SENDER_DIR="$AR_BRIDGE/projects/ar-proj/sessions/$AR_SENDER"
+AR_TARGET_DIR="$AR_BRIDGE/projects/ar-proj/sessions/$AR_TARGET"
+
+# --- Test AR-1: single open conversation → response auto-attaches + stderr line ---
+echo ""
+echo "Test AR-1: response with no --conversation auto-attaches to the one open conversation"
+# Seed: sender→target query creates conv (auto-create + status=waiting)
+AR_Q1=$(BRIDGE_DIR="$AR_BRIDGE" BRIDGE_SESSION_ID="$AR_SENDER" \
+  bash "$SEND_MSG" "$AR_TARGET" query "first question" 2>/dev/null)
+AR_Q1_FILE="$AR_TARGET_DIR/inbox/$AR_Q1.json"
+AR_CONV1=$(jq -r '.conversationId' "$AR_Q1_FILE")
+assert_eq "seed query has a conversationId" "true" "$([ "$AR_CONV1" != "null" ] && [ -n "$AR_CONV1" ] && echo true || echo false)"
+
+# target→sender response without --conversation must auto-attach
+AR_STDERR=$(mktemp)
+AR_RESP_ID=$(BRIDGE_DIR="$AR_BRIDGE" BRIDGE_SESSION_ID="$AR_TARGET" \
+  bash "$SEND_MSG" "$AR_SENDER" response "answer one" 2>"$AR_STDERR")
+AR_RESP_FILE="$AR_SENDER_DIR/inbox/$AR_RESP_ID.json"
+assert_file_exists "auto-attached response delivered" "$AR_RESP_FILE"
+assert_json_field "response conversationId matches open conv" "$AR_RESP_FILE" '.conversationId' "$AR_CONV1"
+assert_contains "stderr emits auto-attached marker" "auto-attached to $AR_CONV1" "$(cat "$AR_STDERR")"
+rm -f "$AR_STDERR"
+
+# --- Test AR-2: stdout is still ONLY the message id (no stderr leakage onto stdout) ---
+echo ""
+echo "Test AR-2: stdout contains only the message id on auto-attach"
+AR_STDOUT=$(BRIDGE_DIR="$AR_BRIDGE" BRIDGE_SESSION_ID="$AR_TARGET" \
+  bash "$SEND_MSG" "$AR_SENDER" task-update "progress note" 2>/dev/null)
+if echo "$AR_STDOUT" | grep -qE '^msg-[a-z0-9]{12}$'; then
+  echo "  PASS: stdout is bare msg-id ($AR_STDOUT)"; PASS=$((PASS + 1))
+else
+  echo "  FAIL: stdout polluted: '$AR_STDOUT'"; FAIL=$((FAIL + 1))
+fi
+
+# --- Test AR-3: zero open conversations → error mentions /bridge inbox ---
+echo ""
+echo "Test AR-3: response with no open conversation errors with /bridge inbox hint"
+AR_ISO_C="cccccc"
+AR_ISO_D="dddddd"
+setup_project_session "$AR_BRIDGE" "ar-proj" "$AR_ISO_C" specialist isoC > /dev/null
+setup_project_session "$AR_BRIDGE" "ar-proj" "$AR_ISO_D" specialist isoD > /dev/null
+AR_ERR=$(mktemp)
+set +e
+BRIDGE_DIR="$AR_BRIDGE" BRIDGE_SESSION_ID="$AR_ISO_C" \
+  bash "$SEND_MSG" "$AR_ISO_D" response "orphan reply" >/dev/null 2>"$AR_ERR"
+AR_RC=$?
+set -e
+if [ "$AR_RC" -ne 0 ]; then
+  echo "  PASS: exit nonzero on zero-match auto-attach"; PASS=$((PASS + 1))
+else
+  echo "  FAIL: expected nonzero exit on zero-match auto-attach"; FAIL=$((FAIL + 1))
+fi
+assert_contains "error mentions /bridge inbox" "/bridge inbox" "$(cat "$AR_ERR")"
+rm -f "$AR_ERR"
+
+# --- Test AR-4: multiple open conversations → error with candidate list ---
+echo ""
+echo "Test AR-4: ambiguous response errors with candidate list"
+# Create a SECOND open conversation between AR_SENDER and AR_TARGET
+AR_Q2=$(BRIDGE_DIR="$AR_BRIDGE" BRIDGE_SESSION_ID="$AR_SENDER" \
+  bash "$SEND_MSG" "$AR_TARGET" query "second question" 2>/dev/null)
+AR_CONV2=$(jq -r '.conversationId' "$AR_TARGET_DIR/inbox/$AR_Q2.json")
+if [ "$AR_CONV2" = "$AR_CONV1" ] || [ -z "$AR_CONV2" ] || [ "$AR_CONV2" = "null" ]; then
+  echo "  FAIL: second query did not create a distinct conversation (got '$AR_CONV2')"; FAIL=$((FAIL + 1))
+else
+  echo "  PASS: two distinct open conversations exist ($AR_CONV1, $AR_CONV2)"; PASS=$((PASS + 1))
+fi
+AR_ERR=$(mktemp)
+set +e
+BRIDGE_DIR="$AR_BRIDGE" BRIDGE_SESSION_ID="$AR_TARGET" \
+  bash "$SEND_MSG" "$AR_SENDER" response "ambiguous reply" >/dev/null 2>"$AR_ERR"
+AR_RC=$?
+set -e
+if [ "$AR_RC" -ne 0 ]; then
+  echo "  PASS: exit nonzero on multi-match auto-attach"; PASS=$((PASS + 1))
+else
+  echo "  FAIL: expected nonzero exit on multi-match auto-attach"; FAIL=$((FAIL + 1))
+fi
+assert_contains "error mentions Multiple open conversations" "Multiple open conversations" "$(cat "$AR_ERR")"
+assert_contains "error lists conv 1" "$AR_CONV1" "$(cat "$AR_ERR")"
+assert_contains "error lists conv 2" "$AR_CONV2" "$(cat "$AR_ERR")"
+assert_contains "error suggests --conversation" "--conversation" "$(cat "$AR_ERR")"
+rm -f "$AR_ERR"
+
+# --- Test AR-5: CONV_FREE_TYPES still bypass auto-attach (no stderr noise, no error) ---
+echo ""
+echo "Test AR-5: ping bypasses auto-attach even with multiple open conversations"
+AR_STDERR=$(mktemp)
+AR_PING_ID=$(BRIDGE_DIR="$AR_BRIDGE" BRIDGE_SESSION_ID="$AR_TARGET" \
+  bash "$SEND_MSG" "$AR_SENDER" ping "hello" 2>"$AR_STDERR")
+AR_PING_FILE="$AR_SENDER_DIR/inbox/$AR_PING_ID.json"
+assert_file_exists "ping delivered despite ambiguity" "$AR_PING_FILE"
+assert_json_field "ping conversationId is null" "$AR_PING_FILE" '.conversationId' "null"
+if grep -q "auto-attached" "$AR_STDERR"; then
+  echo "  FAIL: CONV_FREE_TYPES should not emit auto-attached marker"; FAIL=$((FAIL + 1))
+else
+  echo "  PASS: no auto-attached marker for ping"; PASS=$((PASS + 1))
+fi
+rm -f "$AR_STDERR"
+
+# Cleanup
+rm -rf "$AR_TMPDIR"
+
 print_results

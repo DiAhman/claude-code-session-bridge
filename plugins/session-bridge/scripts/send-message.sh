@@ -123,8 +123,32 @@ elif [ -n "$SENDER_PROJECT_ID" ]; then
         echo "Warning: Conversation $CONVERSATION_ID created but could not set status to waiting" >&2
       }
     else
-      echo "Error: Message type '$MSG_TYPE' requires --conversation for project-scoped sessions" >&2
-      exit 1
+      # Auto-resume: try to attach to the single open conversation between these
+      # two participants. Default-on per v0.3.2 locked decision #4 — every
+      # implicit attach emits a stderr marker so the agent and user can see it.
+      # shellcheck source=lib/find-open-conversation.sh
+      source "$SCRIPT_DIR/lib/find-open-conversation.sh"
+      FOC_ERR=$(mktemp)
+      set +e
+      AUTO_CONV=$(find_open_conversation "$SENDER_ID" "$TARGET_ID" "$SENDER_PROJECT_ID" 2>"$FOC_ERR")
+      FOC_RC=$?
+      set -e
+      if [ "$FOC_RC" -eq 2 ]; then
+        echo "Error: Multiple open conversations between $SENDER_ID and $TARGET_ID — pass --conversation <id> to disambiguate." >&2
+        cat "$FOC_ERR" >&2
+        rm -f "$FOC_ERR"
+        exit 1
+      fi
+      rm -f "$FOC_ERR"
+      if [ -n "$AUTO_CONV" ]; then
+        CONVERSATION_ID="$AUTO_CONV"
+        echo "auto-attached to $CONVERSATION_ID" >&2
+      else
+        echo "Error: Message type '$MSG_TYPE' requires --conversation for project-scoped sessions." >&2
+        echo "  No open conversation found between $SENDER_ID and $TARGET_ID." >&2
+        echo "  Run '/bridge inbox' to find the conversation id, or pass --conversation <id> explicitly." >&2
+        exit 1
+      fi
     fi
   fi
   # Auto-resolve on task-complete/task-cancel
