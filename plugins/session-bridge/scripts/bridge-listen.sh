@@ -9,6 +9,8 @@ set -euo pipefail
 
 BRIDGE_DIR="${BRIDGE_DIR:-$HOME/.claude/session-bridge}"
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+# shellcheck source=lib/stale-check.sh
+source "$SCRIPT_DIR/lib/stale-check.sh"
 
 # --- Logging ---
 _log() {
@@ -230,6 +232,11 @@ while true; do
     if ! mv "$CLAIMED_FILE" "$_ARCHIVE_DIR/$_ORIG_NAME" 2>/dev/null; then
       rm -f "$CLAIMED_FILE" 2>/dev/null || true
     fi
+
+    # Bump receiver heartbeat: successful delivery is liveness proof. (#19)
+    # Best-effort — must NEVER fail the delivery exit path.
+    write_heartbeat "$SESSION_DIR" || true
+
     exit 0
   done
 

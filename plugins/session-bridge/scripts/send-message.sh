@@ -72,6 +72,15 @@ if [ -z "$TARGET_INBOX" ]; then
   SENDER_OUTBOX="$BRIDGE_DIR/sessions/$SENDER_ID/outbox"
 fi
 
+# Sender session dir is the parent of the outbox in both project-scoped and legacy layouts.
+SENDER_DIR="$(dirname "$SENDER_OUTBOX")"
+
+# Self-heal: if our heartbeat-daemon has died (OOM, kill, crash) relaunch it
+# before sending. Best-effort — never block message delivery. (#19)
+if [ -d "$SENDER_DIR" ]; then
+  ensure_producer_alive "$SENDER_DIR" || true
+fi
+
 if [ ! -d "$TARGET_INBOX" ]; then
   echo "Error: Target session $TARGET_ID not found" >&2
   exit 1
@@ -231,6 +240,12 @@ MSG_JSON=$(jq -n \
 TMP_FILE=$(mktemp "$TARGET_INBOX/$MSG_ID.XXXXXX")
 echo "$MSG_JSON" > "$TMP_FILE"
 mv "$TMP_FILE" "$TARGET_INBOX/$MSG_ID.json" || { rm -f "$TMP_FILE"; exit 1; }
+
+# Bump sender heartbeat: outgoing traffic is unambiguous liveness proof. (#19)
+# Best-effort — must NEVER fail message delivery.
+if [ -d "$SENDER_DIR" ]; then
+  write_heartbeat "$SENDER_DIR" || true
+fi
 
 # Copy to sender outbox (audit log) with status=sent
 if [ -d "$SENDER_OUTBOX" ]; then
