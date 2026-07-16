@@ -316,6 +316,24 @@ The output contains the message details including `FROM=`, `FROM_PROJECT=`, `TO_
 
 ---
 
+## Verifying a peer's inbox
+
+If a peer claims they didn't receive a message you sent, do NOT immediately re-send. Re-sending doubles the recipient's queue and creates phantom duplicates. Verify what the bridge actually delivered:
+
+```bash
+bash "${CLAUDE_PLUGIN_ROOT}/scripts/list-inbox.sh" <peer-session-id> --all --json
+```
+
+Each JSON entry has `{id, from, type, status, age, subject}` where `status` is `pending` (queued) or `delivered` (already in `.delivered/`).
+
+- Message id in `.delivered/` → bridge delivered it. Peer's memory drifted (a real failure mode). Recover by re-sharing the *content* in the same conversation — do NOT send a new `msg-` id.
+- Message id `pending` → peer received it, just hasn't drained the inbox. Wait or nudge.
+- Absent from both → bridge dropped it (rare). Re-send is safe.
+
+Absence from `.delivered/` is the only proof of loss. Confident agent denial is not.
+
+---
+
 ## Message Type Handling
 
 ### task-assign
