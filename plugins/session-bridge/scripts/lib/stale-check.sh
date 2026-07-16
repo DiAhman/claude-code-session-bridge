@@ -6,6 +6,9 @@
 #   is_producer_alive <pid>                 → exit 0 if alive AND cmdline matches heartbeat-daemon
 #   is_stale <session-dir> <threshold-sec>  → exit 0 if session is stale
 #   set_status <manifest-file> <new-status> → atomic manifest update
+#   write_heartbeat <session-dir>           → atomic mktemp+mv timestamp write
+#   set_lifecycle <manifest-file> <value>   → atomic manifest .lifecycle update
+#   ensure_producer_alive <session-dir>     → relaunch heartbeat-daemon if PID dead/missing
 
 get_heartbeat_age() {
   local HB_FILE="$1"
@@ -80,6 +83,27 @@ set_status() {
   local TMP
   TMP=$(mktemp "$(dirname "$MANIFEST")/manifest.XXXXXX")
   jq --arg s "$NEW_STATUS" '.status = $s' "$MANIFEST" > "$TMP" 2>/dev/null \
+    && mv "$TMP" "$MANIFEST" \
+    || { rm -f "$TMP"; return 1; }
+}
+
+write_heartbeat() {
+  local SESSION_DIR="$1"
+  [ -d "$SESSION_DIR" ] || return 1
+  local NOW TMP
+  NOW=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+  TMP=$(mktemp "$SESSION_DIR/heartbeat.XXXXXX") || return 1
+  printf '%s' "$NOW" > "$TMP" || { rm -f "$TMP"; return 1; }
+  mv "$TMP" "$SESSION_DIR/heartbeat" || { rm -f "$TMP"; return 1; }
+}
+
+set_lifecycle() {
+  local MANIFEST="$1"
+  local NEW_LIFECYCLE="$2"
+  [ -f "$MANIFEST" ] || return 1
+  local TMP
+  TMP=$(mktemp "$(dirname "$MANIFEST")/manifest.XXXXXX") || return 1
+  jq --arg l "$NEW_LIFECYCLE" '.lifecycle = $l' "$MANIFEST" > "$TMP" 2>/dev/null \
     && mv "$TMP" "$MANIFEST" \
     || { rm -f "$TMP"; return 1; }
 }
