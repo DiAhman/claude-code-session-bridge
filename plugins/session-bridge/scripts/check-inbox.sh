@@ -225,6 +225,14 @@ if [ "$SUMMARY_ONLY" = true ]; then
     SUMMARY="=== CLAUDE BRIDGE STATE ===\nActive sessions:${SESSION_INFO}\n\nTo send messages, use Bash: \${CLAUDE_PLUGIN_ROOT}/scripts/send-message.sh <peer-id> <type> \"<content>\" [in-reply-to]\n=== END BRIDGE ==="
   fi
 
+  # NOTE: PreCompact doesn't accept hookSpecificOutput.additionalContext
+  # (verified 2026-07-16 against Claude Code v2.1.211: executePreCompactHooks
+  # routes through a different hook executor than UserPromptSubmit/PostToolUse/
+  # Stop, and that executor never reads hookSpecificOutput.additionalContext at
+  # all — nor does the shared hook-output field-mapper have a PreCompact case).
+  # systemMessage (terminal-only) is the best available injection for this
+  # event; see #28 for the UserPromptSubmit/PostToolUse/Stop fix this doesn't
+  # apply to.
   jq -n --arg msg "$SUMMARY" '{continue: true, suppressOutput: false, systemMessage: $msg}'
   exit 0
 fi
@@ -403,12 +411,39 @@ if [ "$STOP_HOOK" = true ]; then
   exit 0
 fi
 
-# --- Default mode: surface messages via systemMessage ---
+# --- Default mode: surface messages via hookSpecificOutput.additionalContext ---
 # RATE_LIMITED runs from PostToolUse; non-rate-limited runs from UserPromptSubmit.
+# Both events support hookSpecificOutput.additionalContext in the current
+# Claude Code runtime (verified 2026-07-16 against v2.1.211's decompiled
+# hook-output field-mapper: its event switch has explicit "UserPromptSubmit"
+# and "PostToolUse" cases that read hookSpecificOutput.additionalContext).
+# Fixes #28: the old systemMessage emission reached the terminal only, never
+# the model's context, so claimed+archived messages were silently dropped.
+#
+# The parser throws if hookSpecificOutput.hookEventName doesn't exactly match
+# the event that's actually firing, so HOOK_EVENT must track RATE_LIMITED.
 OUTPUT_MODE="user-prompt"
-[ "$RATE_LIMITED" = true ] && OUTPUT_MODE="post-tool"
-if jq -n --arg msg "$SYSTEM_MSG" '{continue: true, suppressOutput: false, systemMessage: $msg}'; then
-  _log "OUTPUT mode=$OUTPUT_MODE count=$TOTAL_COUNT"
+HOOK_EVENT="UserPromptSubmit"
+if [ "$RATE_LIMITED" = true ]; then
+  OUTPUT_MODE="post-tool"
+  HOOK_EVENT="PostToolUse"
+fi
+
+# EMIT_SUCCESS gates archival (#28 detection gap): jq exiting 0 only proves it
+# printed valid JSON, not that the JSON reached the model. Keep the jq call as
+# the `if` condition itself (not a separate `EMIT_JSON=$(...)` statement) so a
+# nonzero exit is caught by the conditional rather than tripping `set -e`.
+EMIT_SUCCESS=false
+if EMIT_JSON=$(jq -n \
+      --arg msg "$SYSTEM_MSG" \
+      --arg event "$HOOK_EVENT" \
+      '{continue: true, suppressOutput: false, hookSpecificOutput: {hookEventName: $event, additionalContext: $msg}}'); then
+  echo "$EMIT_JSON"
+  EMIT_SUCCESS=true
+fi
+
+if [ "$EMIT_SUCCESS" = true ]; then
+  _log "OUTPUT mode=$OUTPUT_MODE count=$TOTAL_COUNT event=$HOOK_EVENT"
   for F in $FILES_TO_DELETE; do _archive_claimed "$F"; done
 else
   _log "RESTORE mode=$OUTPUT_MODE count=$TOTAL_COUNT reason=jq-failed"

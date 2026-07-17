@@ -46,14 +46,16 @@ HAS_SYSTEM_MSG=$(echo "$OUTPUT" | jq 'has("systemMessage")')
 assert_eq "continue is true" "true" "$CONTINUE"
 assert_eq "no systemMessage key" "false" "$HAS_SYSTEM_MSG"
 
-# --- Test 2: One pending query returns systemMessage with expected content ---
+# --- Test 2: One pending query returns hookSpecificOutput.additionalContext with expected content (#28) ---
+# Default mode moved from systemMessage (terminal-only) to hookSpecificOutput.additionalContext
+# (reaches the model's context) — see #28. Field path updated; coverage preserved.
 echo ""
-echo "Test 2: One pending query returns systemMessage with CLAUDE BRIDGE header, peer name, content, instruction"
+echo "Test 2: One pending query returns additionalContext with CLAUDE BRIDGE header, peer name, content, instruction"
 MSG_ID=$(BRIDGE_DIR="$BRIDGE_DIR" BRIDGE_SESSION_ID="$SENDER_ID" bash "$SEND_MSG" "$TARGET_ID" "query" "What APIs do you expose?")
 
 OUTPUT=$(BRIDGE_DIR="$BRIDGE_DIR" PROJECT_DIR="$PROJECT_B" BRIDGE_SESSION_ID="$TARGET_ID" bash "$CHECK_INBOX")
 CONTINUE=$(echo "$OUTPUT" | jq -r '.continue')
-SYSTEM_MSG=$(echo "$OUTPUT" | jq -r '.systemMessage')
+SYSTEM_MSG=$(echo "$OUTPUT" | jq -r '.hookSpecificOutput.additionalContext')
 
 assert_eq "continue is true" "true" "$CONTINUE"
 assert_contains "has CLAUDE BRIDGE header" "CLAUDE BRIDGE" "$SYSTEM_MSG"
@@ -203,10 +205,11 @@ OUTPUT=$(BRIDGE_DIR="$V2_BRIDGE" BRIDGE_SESSION_ID="$V2_SID_B" PROJECT_DIR="$V2_
 BRIDGE_DIR="$V2_BRIDGE" BRIDGE_SESSION_ID="$V2_SID_A" bash "$SEND_MSG" "$V2_SID_B" "query" "URGENT: system is down" --urgency critical > /dev/null
 
 # Second call should bypass rate limit because of critical message
+# (#28: rate-limited/PostToolUse output moved to hookSpecificOutput.additionalContext)
 OUTPUT=$(BRIDGE_DIR="$V2_BRIDGE" BRIDGE_SESSION_ID="$V2_SID_B" PROJECT_DIR="$V2_PROJ_B" bash "$CHECK_INBOX" --rate-limited 2>/dev/null)
-HAS_MSG=$(echo "$OUTPUT" | jq 'has("systemMessage")')
+HAS_MSG=$(echo "$OUTPUT" | jq '.hookSpecificOutput.additionalContext != null')
 assert_eq "critical message bypasses rate limit" "true" "$HAS_MSG"
-SYSTEM_MSG=$(echo "$OUTPUT" | jq -r '.systemMessage')
+SYSTEM_MSG=$(echo "$OUTPUT" | jq -r '.hookSpecificOutput.additionalContext')
 assert_contains "critical message content present" "URGENT: system is down" "$SYSTEM_MSG"
 
 rm -rf "$V2_TMPDIR"
@@ -227,9 +230,9 @@ kill_watchers "$V2_BRIDGE"
 # Send a message from A to B
 BRIDGE_DIR="$V2_BRIDGE" BRIDGE_SESSION_ID="$V2_SID_A" bash "$SEND_MSG" "$V2_SID_B" "query" "Hello from A" > /dev/null
 
-# B checks inbox — should find message
+# B checks inbox — should find message (#28: field moved to hookSpecificOutput.additionalContext)
 OUTPUT=$(BRIDGE_DIR="$V2_BRIDGE" BRIDGE_SESSION_ID="$V2_SID_B" PROJECT_DIR="$V2_PROJ_B" bash "$CHECK_INBOX")
-SYSTEM_MSG=$(echo "$OUTPUT" | jq -r '.systemMessage')
+SYSTEM_MSG=$(echo "$OUTPUT" | jq -r '.hookSpecificOutput.additionalContext')
 assert_contains "project-scoped finds message" "Hello from A" "$SYSTEM_MSG"
 
 # A checks inbox — should NOT find the message (it's in B's inbox)
@@ -279,8 +282,9 @@ date +%s > "$V2_BRIDGE/.last_inbox_check_${V2_SID_B}"
 BRIDGE_DIR="$V2_BRIDGE" BRIDGE_SESSION_ID="$V2_SID_A" bash "$SEND_MSG" "$V2_SID_B" "query" "No rate limit test" > /dev/null
 
 # Without --rate-limited, should still find the message regardless of timestamp
+# (#28: field moved to hookSpecificOutput.additionalContext)
 OUTPUT=$(BRIDGE_DIR="$V2_BRIDGE" BRIDGE_SESSION_ID="$V2_SID_B" PROJECT_DIR="$V2_PROJ_B" bash "$CHECK_INBOX")
-SYSTEM_MSG=$(echo "$OUTPUT" | jq -r '.systemMessage')
+SYSTEM_MSG=$(echo "$OUTPUT" | jq -r '.hookSpecificOutput.additionalContext')
 assert_contains "no-rate-limit finds message" "No rate limit test" "$SYSTEM_MSG"
 
 rm -rf "$V2_TMPDIR"
@@ -301,8 +305,9 @@ kill_watchers "$V2_BRIDGE"
 # Send query (auto-creates conversation)
 BRIDGE_DIR="$V2_BRIDGE" BRIDGE_SESSION_ID="$V2_SID_A" bash "$SEND_MSG" "$V2_SID_B" "query" "Conversation test" > /dev/null
 
+# (#28: field moved to hookSpecificOutput.additionalContext)
 OUTPUT=$(BRIDGE_DIR="$V2_BRIDGE" BRIDGE_SESSION_ID="$V2_SID_B" PROJECT_DIR="$V2_PROJ_B" bash "$CHECK_INBOX")
-SYSTEM_MSG=$(echo "$OUTPUT" | jq -r '.systemMessage')
+SYSTEM_MSG=$(echo "$OUTPUT" | jq -r '.hookSpecificOutput.additionalContext')
 assert_contains "output has Conversation field" "Conversation: conv-" "$SYSTEM_MSG"
 assert_contains "output has conversation flag in reply instruction" "conversation" "$SYSTEM_MSG"
 
