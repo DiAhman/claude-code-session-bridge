@@ -11,7 +11,7 @@ plugins/session-bridge/
   hooks/hooks.json               # SessionStart, UserPromptSubmit, PostToolUse, PreCompact, Stop, SessionEnd hooks
   skills/bridge-awareness/SKILL.md  # Agent behavior skill
   scripts/                       # Core bash scripts (25 scripts + lib/stale-check.sh, lib/path-resolve.sh, lib/find-open-conversation.sh)
-  tests/                         # Test suite (~30 test files, ~545 tests)
+  tests/                         # Test suite (~35 test files, ~610 tests)
   test.sh                        # Test runner
 ```
 
@@ -85,6 +85,13 @@ The bidirectional, project-scoped, autonomous multi-session orchestration system
 - **Conversation auto-resume-or-create** — `send-message.sh` without `--conversation` now calls `find_open_conversation <sender> <recipient> <project>`. Single open match → silently attaches and emits stderr `auto-attached to <conv-id>`. Zero matches → creates fresh conversation. Multiple matches → refuses with stderr `Multiple open conversations: <id1> <id2>` (exit 2) so the operator picks explicitly.
 - **Standby double-fork guard** — `bridge-listen.sh` refuses to start when (a) `$PPID` is dead/zombie AND (b) `/proc/$PPID/cmdline` matches `^bash -c .* &$`. Operator escape hatch: `BRIDGE_INTENTIONAL_DOUBLE_FORK=1`. Prevents the runaway-listener footgun without disturbing normal Claude Code launch.
 - **Plaintext persistence** — all bridge files (`<inbox>/*`, `outbox/*`, `conversations/*`, `bridge-listen.log`) are plaintext JSON on local disk under `~/.claude/session-bridge/`. Do NOT send secrets, credentials, API keys, or PII through the bridge. See SKILL.md for the operator-facing warning.
+
+### v0.3.3 patch — hook context delivery + inbox drain (shipped)
+
+- **#28 fix**: `check-inbox.sh` Default mode now emits via `hookSpecificOutput.additionalContext` with dynamic `hookEventName` (UserPromptSubmit or PostToolUse) — reaches the model. Previously used `systemMessage` which is terminal-only, causing silent message loss on the PostToolUse path. Archival is now gated on emission success (via `EMIT_SUCCESS` flag) so a failed emit leaves the message `pending` for the next hook to retry rather than silently losing it.
+- **#27 fix (architectural)**: SessionStart hook chain now runs `check-inbox.sh --drain`, surfacing each pending message individually as actionable turn-input on cold-start. `bridge-listen.sh` refuses launch with `BRIDGE_STATUS=pending_messages` when the caller's inbox has pending items — closes the loop so the plumbing enforces the drain-before-standby invariant (v0.3.2 shipped the SKILL.md guidance as interim mitigation). Escape hatch: `BRIDGE_STANDBY_IGNORE_PENDING=1`.
+- **PreCompact bloat filter**: `check-inbox.sh --summary-only` now skips conversations older than 30 days by default (`--stale-conv-days N` override; 0 disables). Prevents accumulated long-tail "waiting" threads from dominating PreCompact context on every `/compact`. Filter falls back to `.createdAt` when `.lastActivity` is unset (the schema doesn't populate `.lastActivity` yet).
+- **Summary-only note**: v0.3.3 also confirmed via decompiled Claude Code source that PreCompact's hook executor uses raw stdout as literal "compaction instructions" and never parses `hookSpecificOutput` or `.systemMessage`. The JSON emission Summary-only mode uses is thus interpreted as instructions rather than displayed context. The `--stale-conv-days` filter still meaningfully reduces the size of that stdout blob; reshaping the emission format to clean summary text is scoped as a v0.3.4 candidate.
 
 ### v2 Backward Compatibility
 
