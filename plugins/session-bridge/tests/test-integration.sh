@@ -33,12 +33,18 @@ SESSION_B=$(BRIDGE_DIR="$BRIDGE_DIR" PROJECT_DIR="$PROJECT_B" bash "$REGISTER")
 echo "  Session A: $SESSION_A  Session B: $SESSION_B"
 assert_eq "sessions are different" "true" "$([ "$SESSION_A" != "$SESSION_B" ] && echo true || echo false)"
 
+# NOTE (#27 pending-guard, v0.3.3 Task 2): every bridge-listen.sh call in
+# this file is preceded by a message already sitting in the target's inbox
+# — that's this file's whole point (message routing coverage), not the
+# pending-guard itself (covered separately in
+# tests/test-bridge-listen-pending-guard.sh). BRIDGE_STANDBY_IGNORE_PENDING=1
+# opts these calls out of the guard so they keep exercising delivery.
 BRIDGE_DIR="$BRIDGE_DIR" BRIDGE_SESSION_ID="$SESSION_A" bash "$CONNECT" "$SESSION_B" > /dev/null
-OUTPUT=$(BRIDGE_DIR="$BRIDGE_DIR" bash "$LISTEN" "$SESSION_B" 5)
+OUTPUT=$(BRIDGE_DIR="$BRIDGE_DIR" BRIDGE_STANDBY_IGNORE_PENDING=1 bash "$LISTEN" "$SESSION_B" 5)
 assert_contains "B sees ping from A" "TYPE=ping" "$OUTPUT"
 
 MSG_ID=$(BRIDGE_DIR="$BRIDGE_DIR" BRIDGE_SESSION_ID="$SESSION_A" bash "$SEND_MSG" "$SESSION_B" query "What changed in v2?")
-OUTPUT=$(BRIDGE_DIR="$BRIDGE_DIR" bash "$LISTEN" "$SESSION_B" 5)
+OUTPUT=$(BRIDGE_DIR="$BRIDGE_DIR" BRIDGE_STANDBY_IGNORE_PENDING=1 bash "$LISTEN" "$SESSION_B" 5)
 assert_contains "B sees query" "What changed in v2?" "$OUTPUT"
 assert_contains "B knows message ID" "MESSAGE_ID=" "$OUTPUT"
 assert_contains "B knows sender" "FROM_ID=$SESSION_A" "$OUTPUT"
@@ -58,14 +64,14 @@ SESSION_C=$(BRIDGE_DIR="$BRIDGE_DIR" PROJECT_DIR="$PROJECT_C" bash "$REGISTER")
 SESSION_D=$(BRIDGE_DIR="$BRIDGE_DIR" PROJECT_DIR="$PROJECT_D" bash "$REGISTER")
 
 Q1_ID=$(BRIDGE_DIR="$BRIDGE_DIR" BRIDGE_SESSION_ID="$SESSION_C" bash "$SEND_MSG" "$SESSION_D" query "How do I use the new API?")
-BRIDGE_DIR="$BRIDGE_DIR" bash "$LISTEN" "$SESSION_D" 5 > /dev/null
+BRIDGE_DIR="$BRIDGE_DIR" BRIDGE_STANDBY_IGNORE_PENDING=1 bash "$LISTEN" "$SESSION_D" 5 > /dev/null
 BRIDGE_DIR="$BRIDGE_DIR" BRIDGE_SESSION_ID="$SESSION_D" bash "$SEND_MSG" "$SESSION_C" response "What language are you using?" "$Q1_ID" > /dev/null
 
 OUTPUT=$(BRIDGE_DIR="$BRIDGE_DIR" bash "$RECEIVE" "$SESSION_C" "$Q1_ID" 5)
 assert_contains "C gets follow-up from D" "What language are you using?" "$OUTPUT"
 
 Q2_ID=$(BRIDGE_DIR="$BRIDGE_DIR" BRIDGE_SESSION_ID="$SESSION_C" bash "$SEND_MSG" "$SESSION_D" query "We use Kotlin")
-BRIDGE_DIR="$BRIDGE_DIR" bash "$LISTEN" "$SESSION_D" 5 > /dev/null
+BRIDGE_DIR="$BRIDGE_DIR" BRIDGE_STANDBY_IGNORE_PENDING=1 bash "$LISTEN" "$SESSION_D" 5 > /dev/null
 BRIDGE_DIR="$BRIDGE_DIR" BRIDGE_SESSION_ID="$SESSION_D" bash "$SEND_MSG" "$SESSION_C" response "For Kotlin: authenticate(config)" "$Q2_ID" > /dev/null
 
 OUTPUT=$(BRIDGE_DIR="$BRIDGE_DIR" bash "$RECEIVE" "$SESSION_C" "$Q2_ID" 5)
@@ -86,8 +92,8 @@ SESSION_G=$(BRIDGE_DIR="$BRIDGE_DIR" PROJECT_DIR="$PROJECT_G" bash "$REGISTER")
 BRIDGE_DIR="$BRIDGE_DIR" BRIDGE_SESSION_ID="$SESSION_E" bash "$SEND_MSG" "$SESSION_F" query "Question from E" > /dev/null
 BRIDGE_DIR="$BRIDGE_DIR" BRIDGE_SESSION_ID="$SESSION_G" bash "$SEND_MSG" "$SESSION_F" query "Question from G" > /dev/null
 
-OUT1=$(BRIDGE_DIR="$BRIDGE_DIR" bash "$LISTEN" "$SESSION_F" 5)
-OUT2=$(BRIDGE_DIR="$BRIDGE_DIR" bash "$LISTEN" "$SESSION_F" 5)
+OUT1=$(BRIDGE_DIR="$BRIDGE_DIR" BRIDGE_STANDBY_IGNORE_PENDING=1 bash "$LISTEN" "$SESSION_F" 5)
+OUT2=$(BRIDGE_DIR="$BRIDGE_DIR" BRIDGE_STANDBY_IGNORE_PENDING=1 bash "$LISTEN" "$SESSION_F" 5)
 ALL_OUTPUT="$OUT1 $OUT2"
 assert_contains "F got E's message" "Question from E" "$ALL_OUTPUT"
 assert_contains "F got G's message" "Question from G" "$ALL_OUTPUT"

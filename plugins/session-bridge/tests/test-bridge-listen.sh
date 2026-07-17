@@ -24,11 +24,39 @@ SESSION_B=$(BRIDGE_DIR="$BRIDGE_DIR" PROJECT_DIR="$PROJECT_B" bash "$REGISTER")
 echo "=== test-bridge-listen.sh ==="
 echo "  session_a=$SESSION_A  session_b=$SESSION_B"
 
+# --- Helper (#27 pending-guard, v0.3.3 Task 2) ---
+# bridge-listen.sh now refuses to launch when its target inbox already has a
+# pending message sitting in it (that backlog must be drained first — see
+# tests/test-bridge-listen-pending-guard.sh). Most of this file's tests were
+# originally written as "drop a message in the inbox, THEN call bridge-listen
+# synchronously and expect immediate pickup" — that shape now trips the guard
+# before the listener ever gets to its scan loop.
+#
+# This helper launches the listener FIRST against an empty inbox (the guard
+# passes), settles briefly so it clears the guard + flock + arms its
+# filesystem watcher, then returns control so the caller can send a message
+# that arrives DURING the blocking wait — the actual scenario bridge-listen
+# is designed for, and a closer match to real /bridge standby usage than the
+# original synchronous send-then-listen shape. Sets LISTEN_BG_PID as a global
+# (NOT via command substitution / echo — backgrounding inside a `$(...)`
+# subshell would reparent the job so the caller's `wait` can't see it) so the
+# caller can `wait "$LISTEN_BG_PID"` and then read $4 for the captured output.
+# Usage: start_listener_bg <bridge-dir> <session-id> <timeout> <outfile>
+start_listener_bg() {
+  local bdir="$1" sid="$2" timeout="$3" outfile="$4"
+  BRIDGE_DIR="$bdir" bash "$LISTEN" "$sid" "$timeout" > "$outfile" 2>&1 &
+  LISTEN_BG_PID=$!
+  sleep 1
+}
+
 # --- Test 1: Returns message when pending ---
 echo ""
 echo "Test 1: Returns message content when a pending message exists"
+OUT1="$TEST_TMPDIR/listen-out-1.txt"
+start_listener_bg "$BRIDGE_DIR" "$SESSION_B" 5 "$OUT1"
 BRIDGE_DIR="$BRIDGE_DIR" BRIDGE_SESSION_ID="$SESSION_A" bash "$SEND_MSG" "$SESSION_B" query "Hello from A" > /dev/null
-OUTPUT=$(BRIDGE_DIR="$BRIDGE_DIR" bash "$LISTEN" "$SESSION_B" 5)
+wait "$LISTEN_BG_PID" || true
+OUTPUT=$(cat "$OUT1")
 assert_contains "has MESSAGE_ID" "MESSAGE_ID=" "$OUTPUT"
 assert_contains "has FROM_ID" "FROM_ID=$SESSION_A" "$OUTPUT"
 assert_contains "has TYPE=query" "TYPE=query" "$OUTPUT"
@@ -68,8 +96,11 @@ fi
 # --- Test 5: Picks up ping messages ---
 echo ""
 echo "Test 5: Handles ping message type"
+OUT5="$TEST_TMPDIR/listen-out-5.txt"
+start_listener_bg "$BRIDGE_DIR" "$SESSION_B" 5 "$OUT5"
 BRIDGE_DIR="$BRIDGE_DIR" BRIDGE_SESSION_ID="$SESSION_A" bash "$SEND_MSG" "$SESSION_B" ping "connected" > /dev/null
-OUTPUT=$(BRIDGE_DIR="$BRIDGE_DIR" bash "$LISTEN" "$SESSION_B" 5)
+wait "$LISTEN_BG_PID" || true
+OUTPUT=$(cat "$OUT5")
 assert_contains "ping type detected" "TYPE=ping" "$OUTPUT"
 
 # --- Test 6: Only picks messages from OWN inbox, not other sessions ---
@@ -78,25 +109,32 @@ echo "Test 6: Does not pick up messages from other sessions' inboxes"
 PROJECT_C="$TEST_TMPDIR/project-c"
 mkdir -p "$PROJECT_C"
 SESSION_C=$(BRIDGE_DIR="$BRIDGE_DIR" PROJECT_DIR="$PROJECT_C" bash "$REGISTER")
-# Send to C's inbox from A
+# Launch C's listener first (empty inbox), then send to C's inbox from A —
+# arrives during C's blocking wait.
+OUT6C="$TEST_TMPDIR/listen-out-6c.txt"
+start_listener_bg "$BRIDGE_DIR" "$SESSION_C" 5 "$OUT6C"
 BRIDGE_DIR="$BRIDGE_DIR" BRIDGE_SESSION_ID="$SESSION_A" bash "$SEND_MSG" "$SESSION_C" query "For session C" > /dev/null
-# Listen on B — should NOT pick up C's message
+# Listen on B (own empty inbox, unaffected by C's traffic) — should NOT pick up C's message
 if BRIDGE_DIR="$BRIDGE_DIR" bash "$LISTEN" "$SESSION_B" 3 > /dev/null 2>&1; then
   echo "  FAIL: B picked up C's message"; FAIL=$((FAIL + 1))
 else
   echo "  PASS: B correctly ignores C's inbox"; PASS=$((PASS + 1))
 fi
-# Listen on C — SHOULD pick it up
-OUTPUT=$(BRIDGE_DIR="$BRIDGE_DIR" bash "$LISTEN" "$SESSION_C" 5)
+# C — SHOULD pick it up
+wait "$LISTEN_BG_PID" || true
+OUTPUT=$(cat "$OUT6C")
 assert_contains "C picks up its own message" "For session C" "$OUTPUT"
 
 # --- Test 7: Does NOT pick up own outgoing messages (echo prevention) ---
 echo ""
 echo "Test 7: Does not echo own messages back"
-# B sends to A — message lands in A's inbox
+# Launch A's listener first (empty inbox), then B sends to A — message lands
+# in A's inbox and arrives during A's blocking wait.
+OUT7="$TEST_TMPDIR/listen-out-7.txt"
+start_listener_bg "$BRIDGE_DIR" "$SESSION_A" 5 "$OUT7"
 BRIDGE_DIR="$BRIDGE_DIR" BRIDGE_SESSION_ID="$SESSION_B" bash "$SEND_MSG" "$SESSION_A" query "From B" > /dev/null
-# A listens and picks it up
-OUTPUT=$(BRIDGE_DIR="$BRIDGE_DIR" bash "$LISTEN" "$SESSION_A" 5)
+wait "$LISTEN_BG_PID" || true
+OUTPUT=$(cat "$OUT7")
 assert_contains "A picks up B's message" "From B" "$OUTPUT"
 # Now: B sends a response to A, message lands in A's inbox FROM B
 # If B somehow had that in its own inbox too, it should be skipped
@@ -106,8 +144,11 @@ assert_contains "A picks up B's message" "From B" "$OUTPUT"
 echo ""
 echo "Test 8: inReplyTo field is included in output when set"
 ORIG_ID="msg-original-123"
+OUT8="$TEST_TMPDIR/listen-out-8.txt"
+start_listener_bg "$BRIDGE_DIR" "$SESSION_B" 5 "$OUT8"
 BRIDGE_DIR="$BRIDGE_DIR" BRIDGE_SESSION_ID="$SESSION_A" bash "$SEND_MSG" "$SESSION_B" response "My reply" "$ORIG_ID" > /dev/null
-OUTPUT=$(BRIDGE_DIR="$BRIDGE_DIR" bash "$LISTEN" "$SESSION_B" 5)
+wait "$LISTEN_BG_PID" || true
+OUTPUT=$(cat "$OUT8")
 assert_contains "inReplyTo in output" "IN_REPLY_TO=$ORIG_ID" "$OUTPUT"
 
 echo ""
@@ -123,9 +164,12 @@ BRIDGE_DIR="$V2_BRIDGE" bash "$PLUGIN_DIR/scripts/project-create.sh" "listen-pro
 V2_SID_A=$(BRIDGE_DIR="$V2_BRIDGE" PROJECT_DIR="$V2_PROJ_A" bash "$PLUGIN_DIR/scripts/project-join.sh" "listen-proj")
 V2_SID_B=$(BRIDGE_DIR="$V2_BRIDGE" PROJECT_DIR="$V2_PROJ_B" bash "$PLUGIN_DIR/scripts/project-join.sh" "listen-proj")
 
-# Send a message, then listen — should find it immediately
+# Launch listener first (empty inbox), then send a message — arrives during the wait.
+OUT_I1="$V2_TMPDIR/listen-out-i1.txt"
+start_listener_bg "$V2_BRIDGE" "$V2_SID_B" 5 "$OUT_I1"
 BRIDGE_DIR="$V2_BRIDGE" BRIDGE_SESSION_ID="$V2_SID_A" bash "$PLUGIN_DIR/scripts/send-message.sh" "$V2_SID_B" ping "hello" > /dev/null
-OUTPUT=$(BRIDGE_DIR="$V2_BRIDGE" bash "$LISTEN" "$V2_SID_B" 5 2>/dev/null || true)
+wait "$LISTEN_BG_PID" || true
+OUTPUT=$(cat "$OUT_I1")
 assert_contains "finds project-scoped message" "TYPE=ping" "$OUTPUT"
 
 rm -rf "$V2_TMPDIR"
@@ -136,8 +180,11 @@ echo "--- BRIDGE_STATUS output markers ---"
 # Test S1: delivered status prefix on successful message delivery
 echo ""
 echo "Test S1: emits BRIDGE_STATUS=delivered when a message is handed off"
+OUT_S1="$TEST_TMPDIR/listen-out-s1.txt"
+start_listener_bg "$BRIDGE_DIR" "$SESSION_B" 5 "$OUT_S1"
 BRIDGE_DIR="$BRIDGE_DIR" BRIDGE_SESSION_ID="$SESSION_A" bash "$SEND_MSG" "$SESSION_B" ping "status-test" > /dev/null
-OUTPUT=$(BRIDGE_DIR="$BRIDGE_DIR" bash "$LISTEN" "$SESSION_B" 5)
+wait "$LISTEN_BG_PID" || true
+OUTPUT=$(cat "$OUT_S1")
 FIRST_LINE=$(echo "$OUTPUT" | head -1)
 assert_eq "first line is BRIDGE_STATUS=delivered" "BRIDGE_STATUS=delivered" "$FIRST_LINE"
 
@@ -160,20 +207,29 @@ TIMEOUT_OUTPUT=$(BRIDGE_DIR="$BRIDGE_DIR" bash "$LISTEN" "$SESSION_B" 2 2>/dev/n
 assert_eq "timed-out listener reports timeout" "BRIDGE_STATUS=timeout" "$TIMEOUT_OUTPUT"
 
 # --- Test R1: Pre-existing message delivered immediately on listener start ---
+# Deliberately sends BEFORE starting the listener to exercise the "scan finds
+# a file that was already there, no CREATE event needed" code path (the
+# scan-then-watch race the ARM-before-scan ordering closes). That shape is
+# exactly what the #27 pending-guard now refuses by default, so this uses the
+# documented escape hatch (BRIDGE_STANDBY_IGNORE_PENDING=1) to reach it —
+# this is the guard's sanctioned bypass, not a weakening of it.
 echo ""
 echo "Test R1: Pre-existing inbox message picked up on first scan"
 # Send a message BEFORE starting the listener — the file is already in inbox
 BRIDGE_DIR="$BRIDGE_DIR" BRIDGE_SESSION_ID="$SESSION_A" bash "$SEND_MSG" "$SESSION_B" query "race-pre-existing" > /dev/null
-OUTPUT=$(BRIDGE_DIR="$BRIDGE_DIR" bash "$LISTEN" "$SESSION_B" 5)
+OUTPUT=$(BRIDGE_DIR="$BRIDGE_DIR" BRIDGE_STANDBY_IGNORE_PENDING=1 bash "$LISTEN" "$SESSION_B" 5)
 assert_contains "delivers pre-existing message" "race-pre-existing" "$OUTPUT"
 
 # --- Test R2: Listener loop iterates correctly after a delivery (re-scan picks up next) ---
+# Both messages are queued BEFORE either listener invocation, modeling a
+# backlog that built up while no listener was running — the same
+# escape-hatch-sanctioned scenario as R1 above.
 echo ""
 echo "Test R2: Two messages in rapid succession both deliver across two listener invocations"
 BRIDGE_DIR="$BRIDGE_DIR" BRIDGE_SESSION_ID="$SESSION_A" bash "$SEND_MSG" "$SESSION_B" query "race-burst-1" > /dev/null
 BRIDGE_DIR="$BRIDGE_DIR" BRIDGE_SESSION_ID="$SESSION_A" bash "$SEND_MSG" "$SESSION_B" query "race-burst-2" > /dev/null
-OUTPUT1=$(BRIDGE_DIR="$BRIDGE_DIR" bash "$LISTEN" "$SESSION_B" 5)
-OUTPUT2=$(BRIDGE_DIR="$BRIDGE_DIR" bash "$LISTEN" "$SESSION_B" 5)
+OUTPUT1=$(BRIDGE_DIR="$BRIDGE_DIR" BRIDGE_STANDBY_IGNORE_PENDING=1 bash "$LISTEN" "$SESSION_B" 5)
+OUTPUT2=$(BRIDGE_DIR="$BRIDGE_DIR" BRIDGE_STANDBY_IGNORE_PENDING=1 bash "$LISTEN" "$SESSION_B" 5)
 COMBINED="$OUTPUT1$OUTPUT2"
 assert_contains "first burst message delivered" "race-burst-1" "$COMBINED"
 assert_contains "second burst message delivered" "race-burst-2" "$COMBINED"

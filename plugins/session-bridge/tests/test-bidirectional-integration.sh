@@ -18,6 +18,13 @@ trap 'rm -rf "$TEST_TMPDIR"; kill $(jobs -p) 2>/dev/null || true' EXIT
 
 BRIDGE_DIR="$TEST_TMPDIR/bridge"
 
+# NOTE (#27 pending-guard, v0.3.3 Task 2): every bridge-listen.sh call below
+# is preceded by a message already sitting in the target's inbox — that's
+# this file's whole point (message routing / conversation-chain coverage,
+# not the pending-guard itself). BRIDGE_STANDBY_IGNORE_PENDING=1 opts these
+# calls out of the guard so they keep exercising delivery. The guard's own
+# refuse/bypass behavior is covered by tests/test-bridge-listen-pending-guard.sh.
+
 echo "=== test-bidirectional-integration.sh ==="
 
 # --- Scenario 1: Full orchestrator -> specialist -> specialist chain ---
@@ -41,7 +48,7 @@ TASK_CONV=$(jq -r '.conversationId' "$BRIDGE_DIR/projects/chain-test/sessions/$D
 assert_not_empty "task conversation created" "$TASK_CONV"
 
 # Dev picks up the task
-OUTPUT=$(BRIDGE_DIR="$BRIDGE_DIR" bash "$LISTEN" "$DEV_ID" 5)
+OUTPUT=$(BRIDGE_DIR="$BRIDGE_DIR" BRIDGE_STANDBY_IGNORE_PENDING=1 bash "$LISTEN" "$DEV_ID" 5)
 assert_contains "dev sees task-assign" "Fix issue #123" "$OUTPUT"
 assert_contains "dev sees type" "TYPE=task-assign" "$OUTPUT"
 
@@ -50,7 +57,7 @@ FW_QUERY=$(BRIDGE_DIR="$BRIDGE_DIR" BRIDGE_SESSION_ID="$DEV_ID" bash "$SEND_MSG"
 FW_CONV=$(jq -r '.conversationId' "$BRIDGE_DIR/projects/chain-test/sessions/$FW_ID/inbox/$FW_QUERY.json")
 
 # Framework picks up the query
-OUTPUT=$(BRIDGE_DIR="$BRIDGE_DIR" bash "$LISTEN" "$FW_ID" 5)
+OUTPUT=$(BRIDGE_DIR="$BRIDGE_DIR" BRIDGE_STANDBY_IGNORE_PENDING=1 bash "$LISTEN" "$FW_ID" 5)
 assert_contains "framework sees query" "Bug in shared utils" "$OUTPUT"
 
 # Framework responds with task-complete
@@ -90,10 +97,10 @@ Q1_ID=$(BRIDGE_DIR="$BRIDGE_DIR" BRIDGE_SESSION_ID="$SID_X" bash "$SEND_MSG" "$S
 Q2_ID=$(BRIDGE_DIR="$BRIDGE_DIR" BRIDGE_SESSION_ID="$SID_Y" bash "$SEND_MSG" "$SID_X" query "What frontend components use the old API?")
 
 # Both pick up each other's messages
-OUT_Y=$(BRIDGE_DIR="$BRIDGE_DIR" bash "$LISTEN" "$SID_Y" 5)
+OUT_Y=$(BRIDGE_DIR="$BRIDGE_DIR" BRIDGE_STANDBY_IGNORE_PENDING=1 bash "$LISTEN" "$SID_Y" 5)
 assert_contains "Y sees X's query" "new API return" "$OUT_Y"
 
-OUT_X=$(BRIDGE_DIR="$BRIDGE_DIR" bash "$LISTEN" "$SID_X" 5)
+OUT_X=$(BRIDGE_DIR="$BRIDGE_DIR" BRIDGE_STANDBY_IGNORE_PENDING=1 bash "$LISTEN" "$SID_X" 5)
 assert_contains "X sees Y's query" "frontend components" "$OUT_X"
 
 # Both respond — get conversationId from outbox (inbox messages are deleted after read)
@@ -132,7 +139,7 @@ LEGACY_SID_A=$(BRIDGE_DIR="$BRIDGE_DIR" PROJECT_DIR="$LEGACY_A" bash "$PLUGIN_DI
 LEGACY_SID_B=$(BRIDGE_DIR="$BRIDGE_DIR" PROJECT_DIR="$LEGACY_B" bash "$PLUGIN_DIR/scripts/register.sh")
 
 MSG_ID=$(BRIDGE_DIR="$BRIDGE_DIR" BRIDGE_SESSION_ID="$LEGACY_SID_A" bash "$SEND_MSG" "$LEGACY_SID_B" query "Legacy test")
-OUTPUT=$(BRIDGE_DIR="$BRIDGE_DIR" bash "$LISTEN" "$LEGACY_SID_B" 5)
+OUTPUT=$(BRIDGE_DIR="$BRIDGE_DIR" BRIDGE_STANDBY_IGNORE_PENDING=1 bash "$LISTEN" "$LEGACY_SID_B" 5)
 assert_contains "legacy message delivered" "Legacy test" "$OUTPUT"
 
 print_results

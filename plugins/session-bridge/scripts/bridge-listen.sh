@@ -108,6 +108,29 @@ if [ ! -d "$INBOX" ]; then
   exit 1
 fi
 
+# --- Pending-message guard (#27 architectural fix) ---
+# Refuse standby launch when the caller has pre-queued inbox messages that
+# haven't been acted on. Standby is a listener for FUTURE messages; the
+# pre-queued backlog must be drained first (SessionStart --drain does this
+# on cold-start, but a specialist entering standby mid-session can still
+# have accumulated pending items).
+#
+# Escape hatch: BRIDGE_STANDBY_IGNORE_PENDING=1 (documented for the rare
+# case where the operator knows the inbox is a distraction, e.g. rebuilding
+# standby state after a manual queue prune).
+if [ -z "${BRIDGE_STANDBY_IGNORE_PENDING:-}" ]; then
+  PENDING_COUNT=0
+  for MSG_FILE in "$INBOX"/*.json; do
+    [ -f "$MSG_FILE" ] || continue
+    PENDING_COUNT=$((PENDING_COUNT + 1))
+  done
+  if [ "$PENDING_COUNT" -gt 0 ]; then
+    echo "BRIDGE_STATUS=pending_messages"
+    echo "bridge-listen refused: $PENDING_COUNT pre-queued message(s) in inbox. Run 'bash \${CLAUDE_PLUGIN_ROOT}/scripts/check-inbox.sh' to drain, OR set BRIDGE_STANDBY_IGNORE_PENDING=1 to bypass." >&2
+    exit 1
+  fi
+fi
+
 # --- Exclusive lock: only one bridge-listen.sh per session ---
 # Uses flock to prevent race conditions where multiple listeners spawn
 # before the PID file cleanup can catch them. This is the definitive fix

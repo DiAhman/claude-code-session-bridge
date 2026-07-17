@@ -100,8 +100,12 @@ INBOX_B="$BRIDGE_DIR/projects/audit-test/sessions/$SID_B/inbox"
 PENDING=$(find "$INBOX_B" -name "*.json" -exec jq -r 'select(.status=="pending") | .id' {} \; 2>/dev/null | wc -l | tr -d '[:space:]')
 assert_eq "one pending message" "true" "$([ "$PENDING" -ge 1 ] && echo true || echo false)"
 
-# After bridge-listen claims it, no .claimed_ files should be left behind
-BRIDGE_DIR="$BRIDGE_DIR" bash "$PLUGIN_DIR/scripts/bridge-listen.sh" "$SID_B" 5 >/dev/null 2>&1 || true
+# After bridge-listen claims it, no .claimed_ files should be left behind.
+# BRIDGE_STANDBY_IGNORE_PENDING=1: this test's whole point is that a message
+# already sitting in the inbox (line above) gets atomically claimed with no
+# orphaned .claimed_ file left behind — the #27 pending-guard would otherwise
+# refuse the launch before the claim logic ever runs, defeating the test.
+BRIDGE_DIR="$BRIDGE_DIR" BRIDGE_STANDBY_IGNORE_PENDING=1 bash "$PLUGIN_DIR/scripts/bridge-listen.sh" "$SID_B" 5 >/dev/null 2>&1 || true
 CLAIMED=$(find "$INBOX_B" -name ".claimed_*" 2>/dev/null | wc -l | tr -d '[:space:]')
 assert_eq "no orphaned .claimed_ files" "0" "$CLAIMED"
 

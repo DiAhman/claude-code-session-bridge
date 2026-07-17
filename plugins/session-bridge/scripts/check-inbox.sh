@@ -1,7 +1,10 @@
 #!/usr/bin/env bash
 # scripts/check-inbox.sh — Check session inbox for pending messages.
 # v3: rate limiting, early exit for non-bridge sessions, project-scoped scanning, Stop hook support.
-# Usage: check-inbox.sh [--rate-limited] [--summary-only] [--stop-hook]
+# v4: --drain mode for SessionStart (#27) — surfaces each pending message
+# individually as actionable additionalContext, gated by the same
+# EMIT_SUCCESS archival check as Default mode (#28).
+# Usage: check-inbox.sh [--rate-limited] [--summary-only] [--stop-hook] [--drain]
 # Env: BRIDGE_DIR (default: ~/.claude/session-bridge), BRIDGE_SESSION_ID, PROJECT_DIR
 set -euo pipefail
 
@@ -9,12 +12,14 @@ set -euo pipefail
 RATE_LIMITED=false
 SUMMARY_ONLY=false
 STOP_HOOK=false
+DRAIN=false
 STOP_COUNTER=0
 STOP_COUNTER_FILE=""
 case "${1:-}" in
   --rate-limited) RATE_LIMITED=true ;;
   --summary-only) SUMMARY_ONLY=true ;;
   --stop-hook) STOP_HOOK=true ;;
+  --drain) DRAIN=true ;;
 esac
 
 BRIDGE_DIR="${BRIDGE_DIR:-$HOME/.claude/session-bridge}"
@@ -108,7 +113,7 @@ fi
 # --- Reset stop counter on UserPromptSubmit (default mode, no flags) ---
 # When the user sends input, reset the safety counter. This signals the user
 # is engaged, so any Stop hook loop is not runaway.
-if [ "$RATE_LIMITED" = false ] && [ "$SUMMARY_ONLY" = false ] && [ "$STOP_HOOK" = false ] && [ -n "$MY_SESSION_ID" ]; then
+if [ "$RATE_LIMITED" = false ] && [ "$SUMMARY_ONLY" = false ] && [ "$STOP_HOOK" = false ] && [ "$DRAIN" = false ] && [ -n "$MY_SESSION_ID" ]; then
   STOP_COUNTER_FILE="$BRIDGE_DIR/.stop_counter_${MY_SESSION_ID}"
   [ -f "$STOP_COUNTER_FILE" ] && echo "0" > "$STOP_COUNTER_FILE"
 fi
@@ -393,7 +398,15 @@ if [ "$TOTAL_COUNT" -eq 0 ]; then
   exit 0
 fi
 
-SYSTEM_MSG="=== CLAUDE BRIDGE: ${TOTAL_COUNT} pending message(s) ===\nYou MUST respond to queries and acknowledge pings before doing anything else.${ALL_MESSAGES}\n=== END BRIDGE ==="
+if [ "$DRAIN" = true ]; then
+  # --drain framing (#27): distinguishes this SessionStart injection from the
+  # Default mode header so the agent recognizes it as cold-start backlog that
+  # must be handled BEFORE reflexively launching /bridge standby (which now
+  # also refuses to launch while pending > 0 — see bridge-listen.sh).
+  SYSTEM_MSG="=== CLAUDE BRIDGE: ${TOTAL_COUNT} pre-queued message(s) — respond BEFORE launching /bridge standby ===\nThese messages were waiting when this session resumed.${ALL_MESSAGES}\n=== END BRIDGE ==="
+else
+  SYSTEM_MSG="=== CLAUDE BRIDGE: ${TOTAL_COUNT} pending message(s) ===\nYou MUST respond to queries and acknowledge pings before doing anything else.${ALL_MESSAGES}\n=== END BRIDGE ==="
+fi
 
 # --- Stop hook output: block stop and inject messages as additionalContext ---
 if [ "$STOP_HOOK" = true ]; then
@@ -427,6 +440,9 @@ HOOK_EVENT="UserPromptSubmit"
 if [ "$RATE_LIMITED" = true ]; then
   OUTPUT_MODE="post-tool"
   HOOK_EVENT="PostToolUse"
+elif [ "$DRAIN" = true ]; then
+  OUTPUT_MODE="drain"
+  HOOK_EVENT="SessionStart"
 fi
 
 # EMIT_SUCCESS gates archival (#28 detection gap): jq exiting 0 only proves it

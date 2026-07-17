@@ -66,7 +66,10 @@ cat > "$RECIPIENT_DIR/inbox/${MSG_ID}.json" <<JSON
 {"protocolVersion":"2.0","id":"$MSG_ID","conversationId":null,"from":"snd001","to":"rcp001","type":"ping","timestamp":"$STALE_TS","status":"pending","content":"hello","inReplyTo":null,"metadata":{"urgency":"normal","fromProject":"proj-x","fromRole":"orchestrator"}}
 JSON
 
-BRIDGE_DIR="$BRIDGE_DIR" bash "$LISTEN" "rcp001" 5 > /dev/null
+# BRIDGE_STANDBY_IGNORE_PENDING=1: the message dropped above is deliberately
+# pre-existing in the inbox — this test is about the heartbeat bump on
+# delivery, not the #27 pending-guard (covered separately).
+BRIDGE_DIR="$BRIDGE_DIR" BRIDGE_STANDBY_IGNORE_PENDING=1 bash "$LISTEN" "rcp001" 5 > /dev/null
 
 RAFTER=$(cat "$RECIPIENT_DIR/heartbeat")
 if [ "$RAFTER" != "$RBEFORE" ] && [ -n "$RAFTER" ]; then

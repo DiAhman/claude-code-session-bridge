@@ -66,9 +66,15 @@ sleep 0.5
 echo ""
 echo "--- task-assign delivery tests ---"
 
+# NOTE (#27 pending-guard, v0.3.3 Task 2): these tests queue messages BEFORE
+# calling bridge-listen.sh — that's the whole point (burst/backlog delivery
+# coverage), not the pending-guard itself (covered separately in
+# tests/test-bridge-listen-pending-guard.sh). BRIDGE_STANDBY_IGNORE_PENDING=1
+# opts these calls out of the guard so they keep exercising delivery.
+
 # Test 3: task-assign is delivered and picked up
 BRIDGE_DIR="$BRIDGE_DIR" BRIDGE_SESSION_ID="$SID_B" bash "$SEND_MSG" "$SID_A" task-assign "Fix issue #99" > /dev/null
-OUTPUT=$(BRIDGE_DIR="$BRIDGE_DIR" bash "$LISTEN" "$SID_A" 5 2>/dev/null || echo "TIMEOUT")
+OUTPUT=$(BRIDGE_DIR="$BRIDGE_DIR" BRIDGE_STANDBY_IGNORE_PENDING=1 bash "$LISTEN" "$SID_A" 5 2>/dev/null || echo "TIMEOUT")
 assert_contains "task-assign picked up" "TYPE=task-assign" "$OUTPUT"
 assert_contains "task-assign content delivered" "Fix issue #99" "$OUTPUT"
 
@@ -76,8 +82,8 @@ assert_contains "task-assign content delivered" "Fix issue #99" "$OUTPUT"
 BRIDGE_DIR="$BRIDGE_DIR" BRIDGE_SESSION_ID="$SID_B" bash "$SEND_MSG" "$SID_A" query "What version?" > /dev/null
 BRIDGE_DIR="$BRIDGE_DIR" BRIDGE_SESSION_ID="$SID_B" bash "$SEND_MSG" "$SID_A" task-assign "Deploy v2" > /dev/null
 
-OUT1=$(BRIDGE_DIR="$BRIDGE_DIR" bash "$LISTEN" "$SID_A" 5 2>/dev/null || echo "TIMEOUT1")
-OUT2=$(BRIDGE_DIR="$BRIDGE_DIR" bash "$LISTEN" "$SID_A" 5 2>/dev/null || echo "TIMEOUT2")
+OUT1=$(BRIDGE_DIR="$BRIDGE_DIR" BRIDGE_STANDBY_IGNORE_PENDING=1 bash "$LISTEN" "$SID_A" 5 2>/dev/null || echo "TIMEOUT1")
+OUT2=$(BRIDGE_DIR="$BRIDGE_DIR" BRIDGE_STANDBY_IGNORE_PENDING=1 bash "$LISTEN" "$SID_A" 5 2>/dev/null || echo "TIMEOUT2")
 ALL="$OUT1 $OUT2"
 assert_contains "query delivered" "What version?" "$ALL"
 assert_contains "task-assign delivered after query" "Deploy v2" "$ALL"
@@ -87,9 +93,9 @@ BRIDGE_DIR="$BRIDGE_DIR" BRIDGE_SESSION_ID="$SID_B" bash "$SEND_MSG" "$SID_A" ta
 BRIDGE_DIR="$BRIDGE_DIR" BRIDGE_SESSION_ID="$SID_B" bash "$SEND_MSG" "$SID_A" task-assign "Task Beta" > /dev/null
 BRIDGE_DIR="$BRIDGE_DIR" BRIDGE_SESSION_ID="$SID_B" bash "$SEND_MSG" "$SID_A" task-assign "Task Gamma" > /dev/null
 
-O1=$(BRIDGE_DIR="$BRIDGE_DIR" bash "$LISTEN" "$SID_A" 5 2>/dev/null || echo "T")
-O2=$(BRIDGE_DIR="$BRIDGE_DIR" bash "$LISTEN" "$SID_A" 5 2>/dev/null || echo "T")
-O3=$(BRIDGE_DIR="$BRIDGE_DIR" bash "$LISTEN" "$SID_A" 5 2>/dev/null || echo "T")
+O1=$(BRIDGE_DIR="$BRIDGE_DIR" BRIDGE_STANDBY_IGNORE_PENDING=1 bash "$LISTEN" "$SID_A" 5 2>/dev/null || echo "T")
+O2=$(BRIDGE_DIR="$BRIDGE_DIR" BRIDGE_STANDBY_IGNORE_PENDING=1 bash "$LISTEN" "$SID_A" 5 2>/dev/null || echo "T")
+O3=$(BRIDGE_DIR="$BRIDGE_DIR" BRIDGE_STANDBY_IGNORE_PENDING=1 bash "$LISTEN" "$SID_A" 5 2>/dev/null || echo "T")
 ALL3="$O1 $O2 $O3"
 assert_contains "task Alpha delivered" "Task Alpha" "$ALL3"
 assert_contains "task Beta delivered" "Task Beta" "$ALL3"
