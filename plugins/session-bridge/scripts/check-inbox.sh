@@ -4,7 +4,7 @@
 # v4: --drain mode for SessionStart (#27) — surfaces each pending message
 # individually as actionable additionalContext, gated by the same
 # EMIT_SUCCESS archival check as Default mode (#28).
-# Usage: check-inbox.sh [--rate-limited] [--summary-only] [--stop-hook] [--drain]
+# Usage: check-inbox.sh [--rate-limited] [--summary-only] [--stop-hook] [--drain] [--stale-conv-days N]
 # Env: BRIDGE_DIR (default: ~/.claude/session-bridge), BRIDGE_SESSION_ID, PROJECT_DIR
 set -euo pipefail
 
@@ -15,12 +15,17 @@ STOP_HOOK=false
 DRAIN=false
 STOP_COUNTER=0
 STOP_COUNTER_FILE=""
-case "${1:-}" in
-  --rate-limited) RATE_LIMITED=true ;;
-  --summary-only) SUMMARY_ONLY=true ;;
-  --stop-hook) STOP_HOOK=true ;;
-  --drain) DRAIN=true ;;
-esac
+STALE_CONV_DAYS_ARG=""
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --rate-limited) RATE_LIMITED=true; shift ;;
+    --summary-only) SUMMARY_ONLY=true; shift ;;
+    --stop-hook) STOP_HOOK=true; shift ;;
+    --drain) DRAIN=true; shift ;;
+    --stale-conv-days) STALE_CONV_DAYS_ARG="${2:-}"; shift 2 ;;
+    *) shift ;;
+  esac
+done
 
 BRIDGE_DIR="${BRIDGE_DIR:-$HOME/.claude/session-bridge}"
 
@@ -194,6 +199,18 @@ if [ "$SUMMARY_ONLY" = true ]; then
       SESSION_INFO="${SESSION_INFO}\n- ${SNAME} (${SID}) [${SROLE}, ${SSTATUS}]"
     done
 
+    # --- Stale-conversation filter (v0.3.3 — PreCompact bloat, v0.3.2 ledger) ---
+    # --summary-only enumerates every non-resolved conversation; on long-lived
+    # projects (field-observed: 1,205 conversation files, 343 "waiting") this
+    # dominates the injected PreCompact context. Skip conversations whose
+    # activity timestamp is older than STALE_CONV_DAYS days. 0 disables the
+    # filter entirely (full-history summaries / debug escape hatch).
+    STALE_CONV_DAYS="${STALE_CONV_DAYS_ARG:-${STALE_CONV_DAYS:-30}}"
+    CONV_CUTOFF_EPOCH=0
+    if [ "$STALE_CONV_DAYS" -gt 0 ] 2>/dev/null; then
+      CONV_CUTOFF_EPOCH=$(( $(date -u +%s) - STALE_CONV_DAYS * 86400 ))
+    fi
+
     # Active conversations
     CONV_INFO=""
     CONV_DIR="$BRIDGE_DIR/projects/$MY_PROJECT_ID/conversations"
@@ -202,6 +219,14 @@ if [ "$SUMMARY_ONLY" = true ]; then
         [ -f "$CONV_FILE" ] || continue
         CSTATUS=$(jq -r '.status' "$CONV_FILE")
         [ "$CSTATUS" = "resolved" ] && continue
+        if [ "$CONV_CUTOFF_EPOCH" -gt 0 ]; then
+          # .lastActivity doesn't exist in the schema yet — fall back to
+          # .createdAt (always present), then epoch-0 as the safe default for
+          # anything malformed (buckets it into "stale", per global constraints).
+          LAST_ACTIVITY=$(jq -r '.lastActivity // .createdAt // "1970-01-01T00:00:00Z"' "$CONV_FILE")
+          LAST_EPOCH=$(date -u -d "$LAST_ACTIVITY" +%s 2>/dev/null || date -u -jf "%Y-%m-%dT%H:%M:%SZ" "$LAST_ACTIVITY" +%s 2>/dev/null || echo 0)
+          [ "$LAST_EPOCH" -lt "$CONV_CUTOFF_EPOCH" ] && continue
+        fi
         CID=$(jq -r '.conversationId' "$CONV_FILE")
         CTOPIC=$(jq -r '.topic' "$CONV_FILE")
         CONV_INFO="${CONV_INFO}\n- ${CID}: ${CTOPIC} [${CSTATUS}]"
