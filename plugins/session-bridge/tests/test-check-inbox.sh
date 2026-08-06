@@ -105,7 +105,10 @@ fi
 echo ""
 echo "Test 5: --summary-only mode contains session ID, send-message instruction, peer name"
 OUTPUT=$(BRIDGE_DIR="$BRIDGE_DIR" PROJECT_DIR="$PROJECT_B" BRIDGE_SESSION_ID="$TARGET_ID" bash "$CHECK_INBOX" --summary-only)
-SYSTEM_MSG=$(echo "$OUTPUT" | jq -r '.systemMessage')
+# v0.3.4 Task 2: --summary-only emits bare stdout text now (no JSON envelope
+# for PreCompact to misread as literal compaction instructions) — parse
+# OUTPUT directly instead of through .systemMessage.
+SYSTEM_MSG="$OUTPUT"
 
 assert_contains "summary has session ID" "$TARGET_ID" "$SYSTEM_MSG"
 assert_contains "summary has send-message instruction" "send-message.sh" "$SYSTEM_MSG"
@@ -254,7 +257,8 @@ V2_SID=$(BRIDGE_DIR="$V2_BRIDGE" PROJECT_DIR="$V2_PROJ" bash "$PLUGIN_DIR/script
 kill_watchers "$V2_BRIDGE"
 
 OUTPUT=$(BRIDGE_DIR="$V2_BRIDGE" BRIDGE_SESSION_ID="$V2_SID" PROJECT_DIR="$V2_PROJ" bash "$CHECK_INBOX" --summary-only)
-SYSTEM_MSG=$(echo "$OUTPUT" | jq -r '.systemMessage')
+# v0.3.4 Task 2: bare stdout text — see note above.
+SYSTEM_MSG="$OUTPUT"
 assert_contains "summary has project name" "summary-test" "$SYSTEM_MSG"
 assert_contains "summary has session id" "$V2_SID" "$SYSTEM_MSG"
 assert_contains "summary has role" "orchestrator" "$SYSTEM_MSG"

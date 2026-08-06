@@ -284,15 +284,14 @@ if [ "$SUMMARY_ONLY" = true ]; then
     SUMMARY="=== CLAUDE BRIDGE STATE ===\nActive sessions:${SESSION_INFO}\n\nTo send messages, use Bash: \${CLAUDE_PLUGIN_ROOT}/scripts/send-message.sh <peer-id> <type> \"<content>\" [in-reply-to]\n=== END BRIDGE ==="
   fi
 
-  # NOTE: PreCompact doesn't accept hookSpecificOutput.additionalContext
-  # (verified 2026-07-16 against Claude Code v2.1.211: executePreCompactHooks
-  # routes through a different hook executor than UserPromptSubmit/PostToolUse/
-  # Stop, and that executor never reads hookSpecificOutput.additionalContext at
-  # all — nor does the shared hook-output field-mapper have a PreCompact case).
-  # systemMessage (terminal-only) is the best available injection for this
-  # event; see #28 for the UserPromptSubmit/PostToolUse/Stop fix this doesn't
-  # apply to.
-  jq -n --arg msg "$SUMMARY" '{continue: true, suppressOutput: false, systemMessage: $msg}'
+  # NOTE (updated 2026-08-05 for v0.3.4): PreCompact's hook executor uses
+  # raw stdout as literal "compaction instructions" and never parses
+  # hookSpecificOutput or reads .systemMessage (verified via decompiled
+  # Claude Code v2.1.211 during v0.3.3 Task 1). The prior JSON envelope
+  # emission reached the model AS instructions ({"continue":true,...})
+  # instead of the summary reaching as context. Emit bare summary text
+  # so PreCompact consumes it correctly.
+  printf '%s\n' "$SUMMARY"
   exit 0
 fi
 

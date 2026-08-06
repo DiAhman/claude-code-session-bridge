@@ -15,6 +15,17 @@
 # originally proposed asserting additionalContext for Summary-only mode are
 # replaced below with tests asserting the correct (systemMessage-retaining)
 # fallback behavior instead, per the brief's documented fallback option.
+#
+# v0.3.4 Task 2 update: the same decompiled-runtime investigation also
+# established that PreCompact's hook executor uses raw stdout as literal
+# "compaction instructions" and never parses hookSpecificOutput OR reads
+# .systemMessage — so the systemMessage envelope above was never reaching
+# the model as context either; it reached it as the literal instructions
+# blob. --summary-only now emits bare stdout text with no JSON wrapper at
+# all. The two Summary-only tests below (originally asserting the
+# systemMessage-retaining envelope) were updated accordingly; see
+# tests/test-check-inbox-summary-emission.sh for the dedicated coverage of
+# the new bare-text shape.
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
@@ -84,32 +95,38 @@ OUT_PTU=$(BRIDGE_DIR="$BRIDGE" PROJECT_DIR="$PROJ_B" BRIDGE_SESSION_ID="$SID_B" 
 EVT_PTU=$(echo "$OUT_PTU" | jq -r '.hookSpecificOutput.hookEventName // ""')
 assert_eq "PostToolUse invocation: hookEventName is PostToolUse" "PostToolUse" "$EVT_PTU"
 
-# --- test_summary_only_mode_retains_systemMessage_precompact_unsupported ---
-# (Replaces the brief's originally-proposed
-#  test_summary_only_mode_emits_additionalContext_not_systemMessage — see file
-#  header. PreCompact cannot consume additionalContext, so retaining
-#  systemMessage is the correct, verified behavior, not a regression.)
+# --- test_summary_only_mode_emits_bare_text_precompact_unsupported ---
+# (v0.3.4 Task 2: renamed from
+#  test_summary_only_mode_retains_systemMessage_precompact_unsupported. The
+#  systemMessage envelope this test used to assert on is gone — PreCompact
+#  never parsed it anyway (see file header). Now asserts the replacement
+#  bare-text shape instead.)
 echo ""
-echo "Test: summary_only_mode_retains_systemMessage_precompact_unsupported"
+echo "Test: summary_only_mode_emits_bare_text_precompact_unsupported"
 IFS='|' read -r BRIDGE PROJ_A PROJ_B SID_A SID_B <<< "$(setup_fixture summary-mode)"
 OUTPUT=$(BRIDGE_DIR="$BRIDGE" PROJECT_DIR="$PROJ_B" BRIDGE_SESSION_ID="$SID_B" bash "$CHECK_INBOX" --summary-only)
-HAS_SYS=$(echo "$OUTPUT" | jq 'has("systemMessage")')
-SYS_MSG=$(echo "$OUTPUT" | jq -r '.systemMessage // ""')
-assert_eq "summary-only mode: still uses systemMessage (PreCompact can't consume additionalContext)" "true" "$HAS_SYS"
-assert_contains "summary-only mode: systemMessage has bridge state header" "CLAUDE BRIDGE STATE" "$SYS_MSG"
+FIRST_BYTE=$(printf '%s' "$OUTPUT" | head -c1)
+assert_eq "summary-only mode: output is bare text, not JSON (PreCompact never parsed the envelope)" "false" "$([ "$FIRST_BYTE" = "{" ] && echo true || echo false)"
+assert_contains "summary-only mode: bare text has bridge state header" "CLAUDE BRIDGE STATE" "$OUTPUT"
 
-# --- test_summary_only_output_is_valid_continue_json ---
-# (Replaces the brief's originally-proposed
-#  test_summary_only_output_json_has_hookEventName_PreCompact — no
-#  hookSpecificOutput block is emitted for PreCompact at all, by design, so
-#  there is no hookEventName to assert. This test instead locks in that the
-#  Summary-only output remains valid, parseable continuation JSON.)
+# --- test_summary_only_output_has_no_json_fields_at_all ---
+# (v0.3.4 Task 2: renamed from test_summary_only_output_is_valid_continue_json,
+#  which asserted continue:true and no hookSpecificOutput block inside a JSON
+#  envelope. There's no JSON envelope left to assert fields on — this now
+#  locks in that neither field survives as text anywhere in the bare-text
+#  output.)
 echo ""
-echo "Test: summary_only_output_is_valid_continue_json"
-CONTINUE=$(echo "$OUTPUT" | jq -r '.continue')
-HAS_HOOK_SPECIFIC=$(echo "$OUTPUT" | jq 'has("hookSpecificOutput")')
-assert_eq "summary-only mode: continue is true" "true" "$CONTINUE"
-assert_eq "summary-only mode: no hookSpecificOutput block (PreCompact doesn't consume it)" "false" "$HAS_HOOK_SPECIFIC"
+echo "Test: summary_only_output_has_no_json_fields_at_all"
+if echo "$OUTPUT" | grep -q '"continue"'; then
+  echo "  FAIL: bare-text output still contains a \"continue\" JSON field"; FAIL=$((FAIL + 1))
+else
+  echo "  PASS: bare-text output contains no \"continue\" JSON field"; PASS=$((PASS + 1))
+fi
+if echo "$OUTPUT" | grep -q '"hookSpecificOutput"'; then
+  echo "  FAIL: bare-text output still contains a \"hookSpecificOutput\" JSON field"; FAIL=$((FAIL + 1))
+else
+  echo "  PASS: bare-text output contains no \"hookSpecificOutput\" JSON field"; PASS=$((PASS + 1))
+fi
 
 # --- test_stop_mode_output_unchanged_still_uses_hookSpecificOutput_additionalContext ---
 echo ""
