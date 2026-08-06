@@ -181,20 +181,16 @@ Do NOT delete `bridge-listen.lock`. Do NOT use `killall`. The user can resume wi
 
 ## Wake-from-Cold: Drain the Inbox Before Standby
 
-Bridge messages may arrive while your session is offline. On a resume from a cold start (a new turn after `/exit`, a laptop wake, or crash-recovery), those messages sit in your inbox waiting for action. `/bridge standby` is a listener for *future* messages — it does not surface the pre-queued backlog. Launching standby immediately on the first turn buries any pre-queued directive under the standby wait-loop, and the message becomes a silent stall for whoever sent it.
+Bridge messages may arrive while your session is offline. On a resume from a cold start (a new turn after `/exit`, a laptop wake, or crash-recovery), those messages sit in your inbox waiting for action. The plugin closes this loop automatically:
 
-**On every wake-from-cold, before launching standby:**
+1. **SessionStart hook runs `check-inbox.sh --drain`** on cold-start. Each pre-queued message is surfaced INDIVIDUALLY as an actionable turn-input, not as a summary count. You'll see them in your first-turn context as separate `--- Message ... ---` blocks.
+2. **`bridge-listen.sh` refuses to launch while pending > 0.** If you try `/bridge standby` before draining, it exits immediately with `BRIDGE_STATUS=pending_messages` and a stderr line telling you to drain first.
 
-1. Look for the `pending:` count in the SessionStart hook's check-inbox summary (emitted as an early system message on the first turn).
-2. If `pending > 0`, drain the backlog explicitly:
+**Act on each pre-queued message (respond, delegate, ack — whatever the message type calls for) BEFORE invoking `/bridge standby`.** Even though the mechanism is automatic, the human/agent action of REPLYING to each one is what actually resolves the coordination thread; `--drain` only surfaces them.
 
-   ```bash
-   bash "${CLAUDE_PLUGIN_ROOT}/scripts/check-inbox.sh"
-   ```
+**Escape hatch (rare):** `BRIDGE_STANDBY_IGNORE_PENDING=1 bash "${CLAUDE_PLUGIN_ROOT}/scripts/bridge-listen.sh" ...` bypasses the pending-guard. Use only when you've explicitly decided the pre-queued backlog is stale and safe to ignore (e.g. after a manual queue prune). Routine use of the bypass is the tell that something's broken upstream — file it.
 
-3. Act on each pre-queued message (respond, delegate, ack — whatever the message type calls for) BEFORE invoking `/bridge standby`.
-
-A pre-queued `task-assign` swallowed by an immediate standby is a silent stall for the orchestrator on the other end. If you cannot find a message that a peer claims they sent, cross-check with the peer's outbox and your inbox archive using the guidance in "Verifying a peer's inbox" (added in Task 3).
+A pre-queued `task-assign` swallowed by an immediate standby is a silent stall for the orchestrator on the other end. If you cannot find a message that a peer claims they sent, cross-check with the peer's outbox and your inbox archive using the guidance in "Verifying a peer's inbox".
 
 ---
 
