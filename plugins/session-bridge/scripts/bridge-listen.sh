@@ -27,6 +27,37 @@ _log_rotate() {
   fi
 }
 
+# Sweep any status:"read" files from the inbox into .delivered/ silently.
+# Defensive fix for #29: a pre-v0.2.17 cached check-inbox.sh briefly in
+# effect on the running plextura orchestrator (2026-07-17 through
+# 2026-07-29 per the Local Plugin Cache Quirk) rewrote each incoming
+# message with .status = "read" instead of archiving. Those files sit
+# in inbox/ forever because current scan filters reject anything not
+# status:"pending". This sweep silently moves them (no re-injection —
+# the model already saw them when the old code injected them).
+#
+# NOTE: this function is intentionally duplicated verbatim from
+# check-inbox.sh rather than sourced from a shared lib — bridge-listen.sh
+# is a hot listener path, and sourcing a 500+ line script just to reuse
+# this one 16-LOC helper is wasteful. Keep both copies in sync if the
+# logic ever changes.
+_sweep_stale_read() {
+  local INBOX="$1"
+  [ -d "$INBOX" ] || return 0
+  local F STATUS SWEPT=0 ARCHIVE_DIR="$INBOX/.delivered"
+  for F in "$INBOX"/*.json; do
+    [ -f "$F" ] || continue
+    STATUS=$(jq -r '.status // ""' "$F" 2>/dev/null || echo "")
+    [ "$STATUS" = "read" ] || continue
+    mkdir -p "$ARCHIVE_DIR" 2>/dev/null
+    if mv "$F" "$ARCHIVE_DIR/$(basename "$F")" 2>/dev/null; then
+      SWEPT=$((SWEPT + 1))
+    fi
+  done
+  [ "$SWEPT" -gt 0 ] && _log "SWEEP stale-read count=$SWEPT inbox=$INBOX"
+  return 0
+}
+
 # Get session ID: from argument, or from get-session-id.sh
 if [ -n "${1:-}" ] && [ "${1:-}" != "0" ] && [ ${#1} -eq 6 ]; then
   # First arg is 6 chars — treat as session ID (session IDs are always 6 chars)
@@ -107,6 +138,11 @@ if [ ! -d "$INBOX" ]; then
   echo "Error: Session $SESSION_ID inbox not found." >&2
   exit 1
 fi
+
+# Sweep status:"read" fossils out FIRST (#29) — before the pending-guard, so
+# PENDING_COUNT below reflects only genuinely-pending messages, not
+# accumulated fossils from the pre-v0.2.17 cached-script window.
+_sweep_stale_read "$INBOX"
 
 # --- Pending-message guard (#27 architectural fix) ---
 # Refuse standby launch when the caller has pre-queued inbox messages that

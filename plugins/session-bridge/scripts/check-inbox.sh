@@ -56,6 +56,35 @@ _archive_claimed() {
   fi
 }
 
+# Sweep any status:"read" files from the inbox into .delivered/ silently.
+# Defensive fix for #29: a pre-v0.2.17 cached check-inbox.sh briefly in
+# effect on the running plextura orchestrator (2026-07-17 through
+# 2026-07-29 per the Local Plugin Cache Quirk) rewrote each incoming
+# message with .status = "read" instead of archiving. Those files sit
+# in inbox/ forever because current scan filters reject anything not
+# status:"pending". This sweep silently moves them (no re-injection —
+# the model already saw them when the old code injected them).
+#
+# NOTE: this function is intentionally duplicated verbatim in
+# bridge-listen.sh (see that file for the rationale) — do not refactor
+# into a shared lib; keep both copies in sync if the logic ever changes.
+_sweep_stale_read() {
+  local INBOX="$1"
+  [ -d "$INBOX" ] || return 0
+  local F STATUS SWEPT=0 ARCHIVE_DIR="$INBOX/.delivered"
+  for F in "$INBOX"/*.json; do
+    [ -f "$F" ] || continue
+    STATUS=$(jq -r '.status // ""' "$F" 2>/dev/null || echo "")
+    [ "$STATUS" = "read" ] || continue
+    mkdir -p "$ARCHIVE_DIR" 2>/dev/null
+    if mv "$F" "$ARCHIVE_DIR/$(basename "$F")" 2>/dev/null; then
+      SWEPT=$((SWEPT + 1))
+    fi
+  done
+  [ "$SWEPT" -gt 0 ] && _log "SWEEP stale-read count=$SWEPT inbox=$INBOX"
+  return 0
+}
+
 # --- Logging (shared bridge-listen.log) ---
 # Set after MY_INBOX is resolved; calls before that point are no-ops.
 _LOG_FILE=""
@@ -282,6 +311,11 @@ if [ -n "$MY_PROJECT_ID" ]; then
       SESSION_NAME=$(jq -r '.projectName // "unknown"' "$MANIFEST")
     fi
 
+    # Sweep status:"read" fossils out FIRST (#29) — before orphan recovery,
+    # so downstream logic (and the pending-guard in bridge-listen.sh) only
+    # ever sees genuine state.
+    _sweep_stale_read "$INBOX"
+
     # Recover orphaned .claimed_ files from killed processes
     # Only recover files older than 30 seconds to avoid racing with active processors
     CLAIM_NOW=$(date +%s)
@@ -357,6 +391,9 @@ else
     if [ -f "$MANIFEST" ]; then
       SESSION_NAME=$(jq -r '.projectName // "unknown"' "$MANIFEST")
     fi
+
+    # Sweep status:"read" fossils out FIRST (#29) — see rationale above.
+    _sweep_stale_read "$INBOX"
 
     # Recover orphaned .claimed_ files older than 30 seconds
     CLAIM_NOW=$(date +%s)
