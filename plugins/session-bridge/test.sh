@@ -2,6 +2,12 @@
 # test.sh — Run the full claude-bridge test suite
 set -euo pipefail
 
+# Tests that spawn heartbeat-daemon via send-message.sh -> ensure_producer_alive
+# get the default 60s interval otherwise, extending suite runtime by ~60s per
+# test file that hits the path. test-heartbeat-daemon.sh already overrides
+# per-invocation; test-heartbeat-on-traffic.sh uses 60 deliberately.
+export HEARTBEAT_INTERVAL=1
+
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 cd "$SCRIPT_DIR"
 
