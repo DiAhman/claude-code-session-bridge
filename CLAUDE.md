@@ -11,7 +11,7 @@ plugins/session-bridge/
   hooks/hooks.json               # SessionStart, UserPromptSubmit, PostToolUse, PreCompact, Stop, SessionEnd hooks
   skills/bridge-awareness/SKILL.md  # Agent behavior skill
   scripts/                       # Core bash scripts (25 scripts + lib/stale-check.sh, lib/path-resolve.sh, lib/find-open-conversation.sh)
-  tests/                         # Test suite (~35 test files, ~610 tests)
+  tests/                         # Test suite (~36 test files, ~645 tests)
   test.sh                        # Test runner
 ```
 
@@ -92,6 +92,13 @@ The bidirectional, project-scoped, autonomous multi-session orchestration system
 - **#27 fix (architectural)**: SessionStart hook chain now runs `check-inbox.sh --drain`, surfacing each pending message individually as actionable turn-input on cold-start. `bridge-listen.sh` refuses launch with `BRIDGE_STATUS=pending_messages` when the caller's inbox has pending items — closes the loop so the plumbing enforces the drain-before-standby invariant (v0.3.2 shipped the SKILL.md guidance as interim mitigation). Escape hatch: `BRIDGE_STANDBY_IGNORE_PENDING=1`.
 - **PreCompact bloat filter**: `check-inbox.sh --summary-only` now skips conversations older than 30 days by default (`--stale-conv-days N` override; 0 disables). Prevents accumulated long-tail "waiting" threads from dominating PreCompact context on every `/compact`. Filter falls back to `.createdAt` when `.lastActivity` is unset (the schema doesn't populate `.lastActivity` yet).
 - **Summary-only note**: v0.3.3 also confirmed via decompiled Claude Code source that PreCompact's hook executor uses raw stdout as literal "compaction instructions" and never parses `hookSpecificOutput` or `.systemMessage`. The JSON emission Summary-only mode uses is thus interpreted as instructions rather than displayed context. The `--stale-conv-days` filter still meaningfully reduces the size of that stdout blob; reshaping the emission format to clean summary text is scoped as a v0.3.4 candidate.
+
+### v0.3.4 patch — stale-read sweep + PreCompact emission reshape (shipped)
+
+- **#29 fix**: `check-inbox.sh` and `bridge-listen.sh` gain a `_sweep_stale_read` function that silently moves any `status: "read"` file from `inbox/` to `.delivered/` without re-injecting content. Cleans up fossils left by a pre-v0.2.17 cached script briefly in effect during 2026-07-17 through 2026-07-29 (field-observed: 315 fossils on the plextura orchestrator; specialists clean because they restarted through the window and reloaded fresh scripts). Sweep runs BEFORE orphan-recovery in `check-inbox.sh` and BEFORE the v0.3.3 pending-guard in `bridge-listen.sh` so downstream state-checks see genuine state. Also future-proofs against any regression that reintroduces the pattern.
+- **PreCompact emission reshape**: `check-inbox.sh --summary-only` now emits the summary as bare stdout text instead of a `{continue, suppressOutput, systemMessage}` JSON envelope. Per v0.3.3 Task 1's decompiled Claude Code v2.1.211 investigation, PreCompact's hook executor uses raw stdout as literal compaction instructions — the JSON envelope was reaching the model AS instructions, not as displayed context. Bare-text emission gets the summary content to the model in its intended shape.
+- **SKILL.md wake-from-cold subsection** updated to reflect v0.3.3's automated SessionStart `--drain` + `bridge-listen.sh` pending-guard, and to document the `BRIDGE_STANDBY_IGNORE_PENDING=1` escape hatch. The old text told agents to look for a `pending: N` count from `--summary-only` and manually invoke `check-inbox.sh` — that described the pre-v0.3.3 mode.
+- **Test-hygiene**: `test.sh` exports `HEARTBEAT_INTERVAL=1` globally. The plan document's "reduces suite runtime by 30-60s" premise was empirically falsified (measured: full-suite runtime 2m57s → 2m58s, within noise, because test files fire-and-forget the detached daemon). Real observed benefits are (a) orphaned heartbeat-daemon lifetime bounded from up to 60s to ~1s after a test's tmpdir cleanup fires, bounding memory/process pressure under suite load, and (b) ~1s speedup on daemon-heavy tests like `test-send-message.sh` from tighter `ensure_producer_alive` startup overhead. `test-heartbeat-on-traffic.sh`'s per-invocation `HEARTBEAT_INTERVAL=60` override still takes precedence via env-var-before-command shell semantics.
 
 ### v2 Backward Compatibility
 
